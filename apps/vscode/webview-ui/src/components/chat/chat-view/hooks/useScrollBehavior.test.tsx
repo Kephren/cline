@@ -107,4 +107,63 @@ describe("useScrollBehavior", () => {
 
 		expect(result.current.disableAutoScrollRef.current).toBe(false)
 	})
+
+	it("scrolls instantly with auto behavior when content changes during active streaming", () => {
+		const streamingMessage = {
+			ts: 2,
+			type: "say",
+			say: "text",
+			text: "streaming chunk...",
+			partial: true,
+		}
+		const { result } = renderHook(() => useScrollBehavior([streamingMessage as any], [], [], {}, vi.fn()))
+		const scrollTo = vi.fn()
+		;(result.current.virtuosoRef as MutableRefObject<{ scrollTo: typeof scrollTo } | null>).current = { scrollTo }
+
+		act(() => {
+			result.current.handleLastRowContentChange()
+		})
+
+		expect(scrollTo).toHaveBeenCalledWith({
+			top: Number.MAX_SAFE_INTEGER,
+			behavior: "auto",
+		})
+	})
+
+	it("scrolls to latest information when prompt streaming completes", () => {
+		const streamingMessage = {
+			ts: 2,
+			type: "say",
+			say: "text",
+			text: "streaming chunk...",
+			partial: true,
+		}
+		let currentMessages = [streamingMessage as any]
+		const { result, rerender } = renderHook(
+			({ msgs }) => useScrollBehavior(msgs, [], [], {}, vi.fn()),
+			{ initialProps: { msgs: currentMessages } },
+		)
+		const scrollTo = vi.fn()
+		;(result.current.virtuosoRef as MutableRefObject<{ scrollTo: typeof scrollTo } | null>).current = { scrollTo }
+
+		act(() => {
+			result.current.disableAutoScrollRef.current = true
+		})
+
+		const completedMessage = {
+			...streamingMessage,
+			partial: false,
+		}
+		currentMessages = [completedMessage as any]
+
+		act(() => {
+			rerender({ msgs: currentMessages })
+		})
+
+		expect(result.current.disableAutoScrollRef.current).toBe(false)
+		expect(scrollTo).toHaveBeenCalledWith({
+			top: Number.MAX_SAFE_INTEGER,
+			behavior: "auto",
+		})
+	})
 })

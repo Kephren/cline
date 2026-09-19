@@ -1957,8 +1957,16 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 					{selectedProvider === "ollama" && (
 						<div className="flex items-center gap-1 shrink-0">
 							<div
-								className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-[var(--vscode-badge-background)] text-[var(--vscode-badge-foreground)] text-[10px] font-mono select-none"
+								className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono select-none text-white transition-colors"
 								data-testid="gpu-cpu-ratio"
+								style={{
+									backgroundColor:
+										(ollamaStatus.isRunning ? ollamaStatus.gpuPercent : 100) >= 100
+											? "#223b2d"
+											: (ollamaStatus.isRunning ? ollamaStatus.gpuPercent : 100) <= 0
+												? "#522b2b"
+												: "#544120",
+								}}
 								title={
 									ollamaStatus.isRunning
 										? `Ollama Active Model: ${ollamaStatus.modelName || selectedModelId}\nVRAM: ${(Number(ollamaStatus.sizeVram) / (1024 * 1024 * 1024)).toFixed(2)} GB / ${(Number(ollamaStatus.size) / (1024 * 1024 * 1024)).toFixed(2)} GB`

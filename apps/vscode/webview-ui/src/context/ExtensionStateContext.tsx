@@ -620,6 +620,29 @@ export const ExtensionStateContextProvider: React.FC<{
 		)
 
 		// Subscribe to partial message events
+		let throttleTimer: ReturnType<typeof setTimeout> | null = null
+		let pendingRaf: number | null = null
+		let lastFlushTime = 0
+		const THROTTLE_MS = 30
+
+		const flushPendingUpdate = () => {
+			if (throttleTimer) {
+				clearTimeout(throttleTimer)
+				throttleTimer = null
+			}
+			if (pendingRaf !== null) {
+				cancelAnimationFrame(pendingRaf)
+				pendingRaf = null
+			}
+			lastFlushTime = performance.now()
+			setState((prevState) => {
+				if (prevState.clineMessages === replicaRef.current.messages) {
+					return prevState
+				}
+				return { ...prevState, clineMessages: replicaRef.current.messages }
+			})
+		}
+
 		partialMessageUnsubscribeRef.current = UiServiceClient.subscribeToPartialMessage(EmptyRequest.create({}), {
 			onResponse: (protoMessage: any) => {
 				try {
@@ -630,19 +653,44 @@ export const ExtensionStateContextProvider: React.FC<{
 					}
 
 					const partialMessage = convertProtoToClineMessage(protoMessage)
-					setState((prevState) => {
-						// Route through the convergent-replica reducer: merge by ts keeping the
-						// higher seq, fence stale epochs, never let an out-of-order or duplicate
-						// delivery corrupt the transcript. Unstamped (classic/legacy) messages
-						// default to epoch 0 and merge by ts as before.
-						const before = replicaRef.current
-						replicaRef.current = reducerApplyMessage(before, partialMessage)
-						if (replicaRef.current === before) {
-							// Stale/ignored — no change.
-							return prevState
+
+					// Route through the convergent-replica reducer synchronously so replicaRef is always current:
+					const before = replicaRef.current
+					replicaRef.current = reducerApplyMessage(before, partialMessage)
+					if (replicaRef.current === before) {
+						// Stale/ignored — no change.
+						return
+					}
+
+					// If the message is complete (not partial), flush immediately to avoid any lag at the end of streaming
+					if (!partialMessage.partial) {
+						flushPendingUpdate()
+						return
+					}
+
+					// For partial / streaming updates, throttle state updates to ~30ms (requestAnimationFrame / 30fps)
+					// to eliminate React render thrashing and IPC message flooding.
+					const now = performance.now()
+					const elapsed = now - lastFlushTime
+
+					if (elapsed >= THROTTLE_MS) {
+						if (pendingRaf === null) {
+							pendingRaf = requestAnimationFrame(() => {
+								pendingRaf = null
+								flushPendingUpdate()
+							})
 						}
-						return { ...prevState, clineMessages: replicaRef.current.messages }
-					})
+					} else if (!throttleTimer) {
+						throttleTimer = setTimeout(() => {
+							throttleTimer = null
+							if (pendingRaf === null) {
+								pendingRaf = requestAnimationFrame(() => {
+									pendingRaf = null
+									flushPendingUpdate()
+								})
+							}
+						}, THROTTLE_MS - elapsed)
+					}
 				} catch (error) {
 					console.error("Failed to process partial message:", error, protoMessage)
 				}
@@ -652,6 +700,7 @@ export const ExtensionStateContextProvider: React.FC<{
 			},
 			onComplete: () => {
 				console.log("[DEBUG] partialMessage subscription completed")
+				flushPendingUpdate()
 			},
 		})
 
@@ -766,6 +815,14 @@ export const ExtensionStateContextProvider: React.FC<{
 			if (worktreesButtonClickedSubscriptionRef.current) {
 				worktreesButtonClickedSubscriptionRef.current()
 				worktreesButtonClickedSubscriptionRef.current = null
+			}
+			if (throttleTimer) {
+				clearTimeout(throttleTimer)
+				throttleTimer = null
+			}
+			if (pendingRaf !== null) {
+				cancelAnimationFrame(pendingRaf)
+				pendingRaf = null
 			}
 			if (partialMessageUnsubscribeRef.current) {
 				partialMessageUnsubscribeRef.current()

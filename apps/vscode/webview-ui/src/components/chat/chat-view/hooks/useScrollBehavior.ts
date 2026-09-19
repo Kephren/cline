@@ -260,6 +260,29 @@ export function useScrollBehavior(
 		[groupedMessages, expandedRows, scrollToBottomAuto, isAtBottom],
 	)
 
+	const isStreaming = useMemo(() => messages.at(-1)?.partial === true, [messages])
+
+	const prevStreamingRef = useRef(isStreaming)
+	useEffect(() => {
+		const wasStreaming = prevStreamingRef.current
+		prevStreamingRef.current = isStreaming
+		// Once prompt changes / streaming completes, re-engage auto-scroll and scroll to the latest information
+		if (wasStreaming && !isStreaming) {
+			disableAutoScrollRef.current = false
+			scrollToBottomAuto()
+			const t1 = setTimeout(() => {
+				scrollToBottomAuto()
+			}, 50)
+			const t2 = setTimeout(() => {
+				scrollToBottomAuto()
+			}, 150)
+			return () => {
+				clearTimeout(t1)
+				clearTimeout(t2)
+			}
+		}
+	}, [isStreaming, scrollToBottomAuto, disableAutoScrollRef])
+
 	const clearLayoutSettleScrollTimers = useCallback(() => {
 		if (layoutSettleScrollTimerRef.current !== null) {
 			clearTimeout(layoutSettleScrollTimerRef.current)
@@ -272,6 +295,12 @@ export function useScrollBehavior(
 			return
 		}
 
+		// During active streaming, scroll instantly to eliminate vertical jitter
+		if (isStreaming) {
+			scrollToBottomAuto()
+			return
+		}
+
 		if (layoutSettleScrollTimerRef.current !== null) {
 			clearTimeout(layoutSettleScrollTimerRef.current)
 		}
@@ -281,7 +310,7 @@ export function useScrollBehavior(
 			}
 			layoutSettleScrollTimerRef.current = null
 		}, 500)
-	}, [scrollToBottomSmooth])
+	}, [disableAutoScrollRef, isStreaming, scrollToBottomAuto, scrollToBottomSmooth])
 
 	const handleRowHeightChange = useCallback(
 		(_isTaller: boolean) => {
@@ -298,20 +327,23 @@ export function useScrollBehavior(
 
 	useEffect(() => {
 		if (!disableAutoScrollRef.current) {
-			scrollToBottomSmooth()
-			setTimeout(() => {
-				if (!disableAutoScrollRef.current) {
-					scrollToBottomAuto()
-				}
-			}, 40)
-			setTimeout(() => {
-				if (!disableAutoScrollRef.current) {
-					scrollToBottomAuto()
-				}
-			}, 70)
-			// return () => clearTimeout(timer) // dont cleanup since if visibleMessages.length changes it cancels.
+			if (isStreaming) {
+				scrollToBottomAuto()
+			} else {
+				scrollToBottomSmooth()
+				setTimeout(() => {
+					if (!disableAutoScrollRef.current) {
+						scrollToBottomAuto()
+					}
+				}, 40)
+				setTimeout(() => {
+					if (!disableAutoScrollRef.current) {
+						scrollToBottomAuto()
+					}
+				}, 70)
+			}
 		}
-	}, [groupedMessages.length, scrollToBottomSmooth, scrollToBottomAuto])
+	}, [groupedMessages.length, isStreaming, scrollToBottomSmooth, scrollToBottomAuto])
 
 	useEffect(() => {
 		if (pendingScrollToMessage !== null) {

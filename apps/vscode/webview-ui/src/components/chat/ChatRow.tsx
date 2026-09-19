@@ -853,7 +853,7 @@ export const ChatRowContent = memo(
 								{hasText && (
 									<div className="flex items-center">
 										<div className={cn("flex-1 min-w-0 pl-1")}>
-											<MarkdownRow markdown={message.text} showCursor={false} />
+											<MarkdownRow markdown={message.text} showCursor={false} isStreaming={isLast && message.partial === true} />
 										</div>
 									</div>
 								)}
@@ -1034,7 +1034,7 @@ export const ChatRowContent = memo(
 									</div>
 								)}
 								<div className="pt-1">
-									<MarkdownRow markdown={message.text} />
+									<MarkdownRow markdown={message.text} isStreaming={isLast && message.partial === true} />
 								</div>
 							</div>
 						)
@@ -1085,7 +1085,7 @@ export const ChatRowContent = memo(
 									position="bottom-right"
 									ref={contentRef}
 									textToCopy={question}>
-									<MarkdownRow markdown={question} />
+									<MarkdownRow markdown={question} isStreaming={isLast && message.partial === true} />
 									{quoteButtonState.visible && (
 										<QuoteButton
 											left={quoteButtonState.left}
