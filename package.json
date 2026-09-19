@@ -1,5 +1,5 @@
 {
-    "name": "@cline/packages",
+    "name": "@kline/packages",
     "private": true,
     "workspaces": [
         "sdk/packages/*",

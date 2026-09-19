@@ -279,10 +279,12 @@ function toSdkModelInfo(selection: ResolvedModelSelection): SdkModelInfo {
 	}
 
 	const maxTokens = positiveFiniteNumber(modelInfo.maxTokens)
-	const contextWindow = positiveFiniteNumber(modelInfo.contextWindow)
+	const contextWindow =
+		positiveFiniteNumber(selection.overrides?.contextWindow) ?? positiveFiniteNumber(modelInfo.contextWindow)
 	const maxInputTokens =
 		positiveFiniteNumber(selection.overrides?.maxInputTokens) ?? positiveFiniteNumber(modelInfo.maxInputTokens)
-	const temperature = nonNegativeFiniteNumber(modelInfo.temperature)
+	const temperature =
+		nonNegativeFiniteNumber(selection.overrides?.temperature) ?? nonNegativeFiniteNumber(modelInfo.temperature)
 	const inputPrice = nonNegativeFiniteNumber(modelInfo.inputPrice)
 	const outputPrice = nonNegativeFiniteNumber(modelInfo.outputPrice)
 	const cacheRead = nonNegativeFiniteNumber(modelInfo.cacheReadsPrice)
@@ -676,7 +678,11 @@ type OllamaProviderConfig = {
  * budgets against the window Ollama actually applies (Ollama truncates the
  * prompt to `num_ctx` server-side).
  */
-export function resolveOllamaProviderConfig(config: ApiConfiguration, modelId: string | undefined): OllamaProviderConfig {
+export function resolveOllamaProviderConfig(
+	config: ApiConfiguration,
+	modelId: string | undefined,
+	selection?: ResolvedModelSelection,
+): OllamaProviderConfig {
 	// providers.json (`contextWindow`) is the source of truth; the legacy
 	// StateManager string is a migration fallback (the config store mirrors
 	// writes to both).
@@ -687,10 +693,11 @@ export function resolveOllamaProviderConfig(config: ApiConfiguration, modelId: s
 	} catch {
 		Logger.warn("[SessionFactory] Failed to read Ollama settings from providers.json")
 	}
+	const overrideContextWindow = positiveFiniteNumber(selection?.overrides?.contextWindow)
 	const raw = config.ollamaApiOptionsCtxNum?.trim()
 	const parsed = raw ? Number(raw) : Number.NaN
 	const legacyContextWindow = Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : undefined
-	const contextWindow = settingsContextWindow ?? legacyContextWindow ?? OLLAMA_DEFAULT_CONTEXT_WINDOW
+	const contextWindow = overrideContextWindow ?? settingsContextWindow ?? legacyContextWindow ?? OLLAMA_DEFAULT_CONTEXT_WINDOW
 	const timeoutMs = config.requestTimeoutMs
 	return {
 		...(typeof timeoutMs === "number" && timeoutMs > 0 ? { timeoutMs } : {}),
@@ -948,11 +955,14 @@ export async function buildSessionConfig(input: SessionConfigInput): Promise<Cor
 	}
 	apiKey = apiKey ?? ""
 	const committedRuntimeModel = resolveCommittedRuntimeModel(providerId, mode, modelId)
+	if (providerId === "ollama") {
+		ollamaProviderConfig = resolveOllamaProviderConfig(apiConfig ?? {}, modelId, committedRuntimeModel)
+	}
 	const overriddenMaxTokens = committedRuntimeModel?.overrides?.maxTokens
 	const maxTokensPerTurn =
 		positiveFiniteNumber(overriddenMaxTokens) ??
 		(providerId === "openai" ? resolveOpenAiCompatibleMaxTokens(apiConfig, mode) : undefined)
-	const temperature = nonNegativeFiniteNumber(committedRuntimeModel?.overrides?.temperature)
+	const temperature = nonNegativeFiniteNumber(committedRuntimeModel?.overrides?.temperature) ?? 0.8
 	const reasoningConfig =
 		providerId === "oca"
 			? (resolveOcaReasoningConfig(mode, apiConfig) ?? resolveProviderReasoningConfig(providerId))

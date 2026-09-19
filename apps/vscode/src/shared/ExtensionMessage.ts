@@ -375,6 +375,8 @@ export interface ClineApiReqInfo {
 	cost?: number
 	cancelReason?: ClineApiReqCancelReason
 	streamingFailedMessage?: string
+	durationMs?: number
+	tokensPerSecond?: number
 }
 
 /**

@@ -1,11 +1,29 @@
 import { mentionRegex, mentionRegexGlobal } from "@shared/context-mentions"
 import { StringRequest } from "@shared/proto/cline/common"
 import { FileSearchRequest, FileSearchType, RelativePathsRequest } from "@shared/proto/cline/file"
+import {
+	CommitModelSelectionRequest,
+	UnloadOllamaModelRequest,
+	WriteProviderConfigPatch,
+	WriteProviderConfigRequest,
+} from "@shared/proto/cline/models"
+import { toProtobufModelOverrides } from "@shared/proto-conversions/models/modelOverrides"
 import { PlanActMode, TogglePlanActModeRequest } from "@shared/proto/cline/state"
 import { type SlashCommand } from "@shared/slashCommands"
 import { Mode } from "@shared/storage/types"
 import { VSCodeButton } from "@vscode/webview-ui-toolkit/react"
-import { AtSignIcon, PlusIcon, TriangleAlertIcon } from "lucide-react"
+import {
+	AtSignIcon,
+	CpuIcon,
+	DatabaseIcon,
+	MinusIcon,
+	PlusIcon,
+	PowerOffIcon,
+	RefreshCwIcon,
+	ThermometerIcon,
+	TriangleAlertIcon,
+	ZapIcon,
+} from "lucide-react"
 import type React from "react"
 import { forwardRef, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import DynamicTextArea from "react-textarea-autosize"
@@ -15,12 +33,13 @@ import { CHAT_CONSTANTS } from "@/components/chat/chat-view/constants"
 import SlashCommandMenu from "@/components/chat/SlashCommandMenu"
 import Thumbnails from "@/components/common/Thumbnails"
 import { getModeSpecificFields } from "@/components/settings/utils/providerUtils"
+import { Slider as ContextSlider } from "@/components/ui/slider"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { useExtensionState } from "@/context/ExtensionStateContext"
 import { usePlatform } from "@/context/PlatformContext"
 import { useNormalizedApiConfiguration } from "@/hooks/useNormalizedApiConfiguration"
 import { cn } from "@/lib/utils"
-import { FileServiceClient, StateServiceClient } from "@/services/grpc-client"
+import { FileServiceClient, ModelsServiceClient, StateServiceClient } from "@/services/grpc-client"
 import {
 	ContextMenuOptionType,
 	getContextMenuOptionIndex,
@@ -95,6 +114,56 @@ interface GitCommit {
 
 const PLAN_MODE_COLOR = "var(--vscode-activityWarningBadge-background)"
 const ACT_MODE_COLOR = "var(--vscode-focusBorder)"
+
+const CONTEXT_SIZES = [2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144] as const
+
+function formatContextSizeLabel(tokens: number): string {
+	if (tokens >= 1024) {
+		return `${Math.round(tokens / 1024)}K`
+	}
+	return `${tokens}`
+}
+
+function calculateLatestInferenceSpeed(messages: ReturnType<typeof useExtensionState>["clineMessages"]): string | null {
+	if (!messages || messages.length === 0) return null
+
+	for (let i = messages.length - 1; i >= 0; i--) {
+		const msg = messages[i]
+		if (msg.type === "say") {
+			if ((msg.say === "api_req_finished" || msg.say === "api_req_started") && msg.text) {
+				try {
+					const info = JSON.parse(msg.text)
+					if (typeof info.tokensPerSecond === "number" && info.tokensPerSecond > 0) {
+						return info.tokensPerSecond.toFixed(1)
+					}
+					if (
+						typeof info.durationMs === "number" &&
+						info.durationMs > 50 &&
+						typeof info.tokensOut === "number" &&
+						info.tokensOut > 0
+					) {
+						return (info.tokensOut / (info.durationMs / 1000)).toFixed(1)
+					}
+					const tokensOut = typeof info.tokensOut === "number" ? info.tokensOut : 0
+					if (tokensOut > 0) {
+						for (let j = i - 1; j >= 0; j--) {
+							if (messages[j].type === "say" && messages[j].say === "api_req_started") {
+								const durationSec = (msg.ts - messages[j].ts) / 1000
+								if (durationSec > 0.05 && durationSec < 10000) {
+									return (tokensOut / durationSec).toFixed(1)
+								}
+								break
+							}
+						}
+					}
+				} catch {
+					// ignore
+				}
+			}
+		}
+	}
+	return null
+}
 
 const SwitchContainer = styled.div<{ disabled: boolean }>`
 	display: flex;
@@ -195,6 +264,35 @@ const ModelButtonContent = styled.div`
 	white-space: nowrap;
 `
 
+const ModelSelectDropdown = styled.select`
+	background-color: var(--vscode-dropdown-background);
+	color: var(--vscode-dropdown-foreground);
+	border: 1px solid var(--vscode-dropdown-border, var(--vscode-input-border));
+	border-radius: 3px;
+	height: 20px;
+	font-size: 11px;
+	width: 100%;
+	min-width: 0;
+	padding: 0 4px;
+	cursor: pointer;
+	outline: none;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+
+	&:hover {
+		border-color: var(--vscode-focusBorder);
+	}
+
+	&:focus {
+		border-color: var(--vscode-focusBorder);
+	}
+
+	option {
+		background-color: var(--vscode-dropdown-background);
+		color: var(--vscode-dropdown-foreground);
+	}
+`
+
 const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 	(
 		{
@@ -225,7 +323,10 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 			remoteConfigSettings,
 			navigateToSettingsModelPicker,
 			mcpServers,
+			clineMessages,
 		} = useExtensionState()
+
+		const latestInferenceSpeed = useMemo(() => calculateLatestInferenceSpeed(clineMessages), [clineMessages])
 		const [isTextAreaFocused, setIsTextAreaFocused] = useState(false)
 		const [isDraggingOver, setIsDraggingOver] = useState(false)
 		const [gitCommits, setGitCommits] = useState<GitCommit[]>([])
@@ -1129,6 +1230,239 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 			navigateToSettingsModelPicker({ targetSection: "api-config" })
 		}
 
+		const [ollamaModels, setOllamaModels] = useState<string[]>([])
+		const [isRefreshingOllama, setIsRefreshingOllama] = useState(false)
+		const [ollamaStatus, setOllamaStatus] = useState<{
+			isRunning: boolean
+			modelName: string
+			size: number
+			sizeVram: number
+			gpuPercent: number
+			cpuPercent: number
+		}>({
+			isRunning: false,
+			modelName: "",
+			size: 0,
+			sizeVram: 0,
+			gpuPercent: 100,
+			cpuPercent: 0,
+		})
+		const [isUnloadingOllama, setIsUnloadingOllama] = useState(false)
+		const ollamaBaseUrl = apiConfiguration?.ollamaBaseUrl
+
+		const requestOllamaStatus = useCallback(async () => {
+			if (selectedProvider !== "ollama") return
+			try {
+				const res = await ModelsServiceClient.getOllamaModelStatus(
+					StringRequest.create({
+						value: ollamaBaseUrl || "",
+					}),
+				)
+				if (res) {
+					setOllamaStatus({
+						isRunning: res.isRunning,
+						modelName: res.modelName,
+						size: res.size,
+						sizeVram: res.sizeVram,
+						gpuPercent: res.gpuPercent,
+						cpuPercent: res.cpuPercent,
+					})
+				}
+			} catch (error) {
+				console.error("Failed to fetch Ollama model status in ChatTextArea:", error)
+			}
+		}, [selectedProvider, ollamaBaseUrl])
+
+		const handleUnloadOllamaModel = useCallback(async () => {
+			if (selectedProvider !== "ollama") return
+			setIsUnloadingOllama(true)
+			try {
+				await ModelsServiceClient.unloadOllamaModel(
+					UnloadOllamaModelRequest.create({
+						baseUrl: ollamaBaseUrl || "",
+						modelName: ollamaStatus.modelName || selectedModelId || "",
+					}),
+				)
+				await requestOllamaStatus()
+			} catch (error) {
+				console.error("Failed to unload Ollama model in ChatTextArea:", error)
+			} finally {
+				setIsUnloadingOllama(false)
+			}
+		}, [selectedProvider, ollamaBaseUrl, ollamaStatus.modelName, selectedModelId, requestOllamaStatus])
+
+		useEffect(() => {
+			if (selectedProvider === "ollama") {
+				requestOllamaStatus()
+				const interval = setInterval(requestOllamaStatus, 5000)
+				return () => clearInterval(interval)
+			}
+		}, [selectedProvider, requestOllamaStatus])
+
+		const requestOllamaModels = useCallback(async () => {
+			if (selectedProvider !== "ollama") return
+			setIsRefreshingOllama(true)
+			try {
+				const response = await ModelsServiceClient.getOllamaModels(
+					StringRequest.create({
+						value: ollamaBaseUrl || "",
+					}),
+				)
+				if (response?.values) {
+					setOllamaModels(response.values)
+				}
+				void requestOllamaStatus()
+			} catch (error) {
+				console.error("Failed to fetch Ollama models in ChatTextArea:", error)
+			} finally {
+				setIsRefreshingOllama(false)
+			}
+		}, [selectedProvider, ollamaBaseUrl, requestOllamaStatus])
+
+		useEffect(() => {
+			if (selectedProvider === "ollama") {
+				requestOllamaModels()
+			}
+		}, [selectedProvider, requestOllamaModels])
+
+		// Context Size Slider state & sync
+		const contextWindowFromModel = selectedModelInfo?.contextWindow
+		const ollamaCtx = Number.parseInt(apiConfiguration?.ollamaApiOptionsCtxNum || "", 10)
+		const effectiveContextSize =
+			Number.isFinite(contextWindowFromModel) && (contextWindowFromModel ?? 0) > 0
+				? (contextWindowFromModel as number)
+				: Number.isFinite(ollamaCtx) && ollamaCtx > 0
+					? ollamaCtx
+					: 32768
+
+		const [contextSize, setContextSize] = useState<number>(effectiveContextSize)
+
+		useEffect(() => {
+			if (effectiveContextSize && effectiveContextSize > 0) {
+				setContextSize(effectiveContextSize)
+			}
+		}, [effectiveContextSize])
+
+		// Temperature state & sync
+		const modelTemp = selectedModelInfo?.temperature
+		const [temperature, setTemperature] = useState<number>(
+			typeof modelTemp === "number" && Number.isFinite(modelTemp) ? modelTemp : 0.8,
+		)
+
+		useEffect(() => {
+			if (typeof modelTemp === "number" && Number.isFinite(modelTemp)) {
+				setTemperature(modelTemp)
+			}
+		}, [modelTemp])
+
+		const handleTemperatureSelect = useCallback(
+			async (newTemp: number) => {
+				const clamped = Math.max(0, Math.min(1, Math.round(newTemp * 10) / 10))
+				setTemperature(clamped)
+				if (!selectedModelId) return
+				try {
+					await ModelsServiceClient.commitModelSelection(
+						CommitModelSelectionRequest.create({
+							providerId: selectedProvider,
+							mode,
+							modelId: selectedModelId,
+							overrides: toProtobufModelOverrides({
+								contextWindow: contextSize,
+								temperature: clamped,
+							}),
+						}),
+					)
+				} catch (error) {
+					console.error("Failed to commit temperature override:", error)
+				}
+			},
+			[selectedProvider, mode, selectedModelId, contextSize],
+		)
+
+		const handleTemperatureStep = useCallback(
+			(step: number) => {
+				const next = Math.round((temperature + step) * 10) / 10
+				void handleTemperatureSelect(next)
+			},
+			[temperature, handleTemperatureSelect],
+		)
+
+		const handleOllamaModelSelect = useCallback(
+			async (newModelId: string) => {
+				if (!newModelId) return
+				try {
+					await ModelsServiceClient.commitModelSelection(
+						CommitModelSelectionRequest.create({
+							providerId: "ollama",
+							mode,
+							modelId: newModelId,
+							overrides: toProtobufModelOverrides({
+								contextWindow: contextSize,
+								temperature,
+							}),
+						}),
+					)
+				} catch (error) {
+					console.error("Failed to commit Ollama model selection:", error)
+				}
+			},
+			[mode, contextSize, temperature],
+		)
+
+		const sliderIndex = useMemo(() => {
+			let closest = 0
+			let minDiff = Infinity
+			CONTEXT_SIZES.forEach((size, idx) => {
+				const diff = Math.abs(size - (contextSize || 32768))
+				if (diff < minDiff) {
+					minDiff = diff
+					closest = idx
+				}
+			})
+			return closest
+		}, [contextSize])
+
+		const handleContextSizeChange = useCallback(
+			async (newIndex: number) => {
+				const newSize = CONTEXT_SIZES[newIndex]
+				setContextSize(newSize)
+
+				if (selectedProvider === "ollama") {
+					try {
+						await ModelsServiceClient.writeProviderConfig(
+							WriteProviderConfigRequest.create({
+								providerId: "ollama",
+								patch: WriteProviderConfigPatch.create({
+									contextWindow: newSize,
+								}),
+							}),
+						)
+					} catch (error) {
+						console.error("Failed to update Ollama context window config:", error)
+					}
+				}
+
+				if (selectedModelId) {
+					try {
+						await ModelsServiceClient.commitModelSelection(
+							CommitModelSelectionRequest.create({
+								providerId: selectedProvider,
+								mode,
+								modelId: selectedModelId,
+								overrides: toProtobufModelOverrides({
+									contextWindow: newSize,
+									temperature,
+								}),
+							}),
+						)
+					} catch (error) {
+						console.error("Failed to commit model context window override:", error)
+					}
+				}
+			},
+			[selectedProvider, selectedModelId, mode, temperature],
+		)
+
 		// Get model display name
 		const modelDisplayName = useMemo(() => {
 			const {
@@ -1619,6 +1953,121 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 						</span>
 					</div>
 				)}
+				<div className="flex items-center gap-2 px-3 pb-1.5 pt-0.5 text-xs">
+					{selectedProvider === "ollama" && (
+						<div className="flex items-center gap-1 shrink-0">
+							<div
+								className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-[var(--vscode-badge-background)] text-[var(--vscode-badge-foreground)] text-[10px] font-mono select-none"
+								data-testid="gpu-cpu-ratio"
+								title={
+									ollamaStatus.isRunning
+										? `Ollama Active Model: ${ollamaStatus.modelName || selectedModelId}\nVRAM: ${(Number(ollamaStatus.sizeVram) / (1024 * 1024 * 1024)).toFixed(2)} GB / ${(Number(ollamaStatus.size) / (1024 * 1024 * 1024)).toFixed(2)} GB`
+										: "Ollama: Idle (loads into memory on generation)"
+								}>
+								<CpuIcon size={11} />
+								<span>
+									{ollamaStatus.isRunning
+										? `${ollamaStatus.gpuPercent}% GPU / ${ollamaStatus.cpuPercent}% CPU`
+										: "100% GPU"}
+								</span>
+							</div>
+							<button
+								type="button"
+								onClick={handleUnloadOllamaModel}
+								disabled={isUnloadingOllama || (!ollamaStatus.isRunning && !ollamaStatus.modelName)}
+								className="flex items-center justify-center p-1 rounded bg-[var(--vscode-button-secondaryBackground)] hover:bg-[var(--vscode-button-secondaryHoverBackground)] text-[var(--vscode-button-secondaryForeground)] cursor-pointer transition-colors border-0 select-none disabled:opacity-40 disabled:cursor-not-allowed"
+								aria-label="Free VRAM"
+								title={
+									ollamaStatus.isRunning
+										? `Unload ${ollamaStatus.modelName || selectedModelId} and free VRAM (${(Number(ollamaStatus.sizeVram) / (1024 * 1024 * 1024)).toFixed(2)} GB)`
+										: "No model currently loaded in VRAM"
+								}
+								data-testid="unload-ollama-model-button">
+								<PowerOffIcon size={11} className={isUnloadingOllama ? "animate-spin" : ""} />
+							</button>
+						</div>
+					)}
+					<div
+						className="flex items-center shrink-0 text-[var(--vscode-descriptionForeground)] select-none cursor-help"
+						title={`Context: ${CONTEXT_SIZES[sliderIndex].toLocaleString()} tokens`}>
+						<DatabaseIcon size={12} />
+					</div>
+					<div className="flex-1 min-w-0 flex items-center gap-2">
+						<ContextSlider
+							aria-label="Context"
+							aria-valuetext={`${CONTEXT_SIZES[sliderIndex].toLocaleString()} tokens (${formatContextSizeLabel(CONTEXT_SIZES[sliderIndex])})`}
+							className="flex-1 cursor-pointer"
+							data-testid="context-size-slider"
+							max={CONTEXT_SIZES.length - 1}
+							min={0}
+							onValueChange={(val: number[]) => handleContextSizeChange(val[0])}
+							step={1}
+							value={[sliderIndex]}
+						/>
+						<span
+							className="text-[11px] font-mono text-[var(--vscode-foreground)] shrink-0 min-w-[36px] text-right select-none"
+							data-testid="context-size-value"
+							title={`${CONTEXT_SIZES[sliderIndex].toLocaleString()} tokens`}>
+							{formatContextSizeLabel(CONTEXT_SIZES[sliderIndex])}
+						</span>
+						<div
+							className="flex items-center rounded border border-[var(--vscode-input-border)] bg-[var(--vscode-input-background)] text-[10px] font-mono shrink-0 select-none overflow-hidden h-5"
+							title="Temperature: 0.0 - 1.0 (0.1 step, default 0.8)">
+							<div
+								className="pl-1.5 pr-0.5 text-[var(--vscode-descriptionForeground)] flex items-center cursor-help"
+								title={`Temperature: ${temperature.toFixed(1)}`}>
+								<ThermometerIcon size={11} />
+							</div>
+							<button
+								type="button"
+								onClick={() => handleTemperatureStep(-0.1)}
+								disabled={temperature <= 0.05}
+								className="px-1 h-full flex items-center justify-center text-[var(--vscode-foreground)] hover:bg-[var(--vscode-toolbar-hoverBackground)] cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed border-0 bg-transparent transition-colors"
+								aria-label="Decrease temperature"
+								title="Decrease temperature (-0.1)"
+								data-testid="temperature-decrement">
+								<MinusIcon size={10} />
+							</button>
+							<input
+								type="number"
+								min={0}
+								max={1}
+								step={0.1}
+								value={temperature.toFixed(1)}
+								onChange={(e) => {
+									const val = parseFloat(e.target.value)
+									if (!isNaN(val)) {
+										void handleTemperatureSelect(val)
+									}
+								}}
+								className="w-[26px] h-full bg-transparent text-center text-[10px] font-mono text-[var(--vscode-foreground)] focus:outline-none border-0 p-0 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+								data-testid="temperature-input"
+								title="Temperature: 0.0 to 1.0 (default 0.8)"
+							/>
+							<button
+								type="button"
+								onClick={() => handleTemperatureStep(0.1)}
+								disabled={temperature >= 0.95}
+								className="px-1 h-full flex items-center justify-center text-[var(--vscode-foreground)] hover:bg-[var(--vscode-toolbar-hoverBackground)] cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed border-0 bg-transparent transition-colors"
+								aria-label="Increase temperature"
+								title="Increase temperature (+0.1)"
+								data-testid="temperature-increment">
+								<PlusIcon size={10} />
+							</button>
+						</div>
+						<span
+							className="flex items-center gap-1 shrink-0 px-1.5 py-0.5 rounded bg-[var(--vscode-badge-background)] text-[var(--vscode-badge-foreground)] text-[10px] font-mono select-none"
+							data-testid="inference-speed"
+							title={
+								latestInferenceSpeed
+									? `Latest Inference Speed: ${latestInferenceSpeed} tokens/sec`
+									: "Inference speed of latest generation"
+							}>
+							<ZapIcon size={10} />
+							<span>{latestInferenceSpeed ? `${latestInferenceSpeed} t/s` : "-- t/s"}</span>
+						</span>
+					</div>
+				</div>
 				<div className="flex justify-between items-center -mt-[2px] px-3 pb-2">
 					{/* Always render both components, but control visibility with CSS */}
 					<div className="relative flex-1 min-w-0 h-5">
@@ -1666,16 +2115,66 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 							<ClineRulesToggleModal />
 
 							<ModelContainer>
-								<ModelButtonWrapper>
-									<ModelDisplayButton
-										disabled={false}
-										onClick={handleModelButtonClick}
-										role="button"
-										tabIndex={0}
-										title="Open API Settings">
-										<ModelButtonContent className="text-xs">{modelDisplayName}</ModelButtonContent>
-									</ModelDisplayButton>
-								</ModelButtonWrapper>
+								{selectedProvider === "ollama" ? (
+									<div className="flex items-center w-full min-w-0 mr-1.5 gap-1">
+										<ModelSelectDropdown
+											aria-label="Select Ollama Model"
+											data-testid="ollama-model-select"
+											onFocus={requestOllamaModels}
+											onChange={(e) => {
+												if (e.target.value === "__settings__") {
+													handleModelButtonClick()
+												} else if (e.target.value) {
+													handleOllamaModelSelect(e.target.value)
+												}
+											}}
+											title={`Ollama model for ${mode} mode: ${selectedModelId || "None"}`}
+											value={selectedModelId || ""}>
+											{ollamaModels.length === 0 && !selectedModelId && (
+												<option value="">No models found</option>
+											)}
+											{selectedModelId && !ollamaModels.includes(selectedModelId) && (
+												<option key={selectedModelId} value={selectedModelId}>
+													{selectedModelId}
+												</option>
+											)}
+											{ollamaModels.map((m) => (
+												<option key={m} value={m}>
+													{m}
+												</option>
+											))}
+											<option disabled>──────────</option>
+											<option value="__settings__">Configure in Settings...</option>
+										</ModelSelectDropdown>
+										<Tooltip>
+											<TooltipContent>Refresh Ollama models</TooltipContent>
+											<TooltipTrigger>
+												<VSCodeButton
+													appearance="icon"
+													aria-label="Refresh Ollama models"
+													className="p-0 m-0 flex items-center shrink-0"
+													data-testid="refresh-ollama-models"
+													disabled={isRefreshingOllama}
+													onClick={requestOllamaModels}>
+													<ButtonContainer>
+														<RefreshCwIcon className={isRefreshingOllama ? "animate-spin" : ""} size={11} />
+													</ButtonContainer>
+												</VSCodeButton>
+											</TooltipTrigger>
+										</Tooltip>
+									</div>
+								) : (
+									<ModelButtonWrapper>
+										<ModelDisplayButton
+											disabled={false}
+											onClick={handleModelButtonClick}
+											role="button"
+											tabIndex={0}
+											title="Open API Settings">
+											<ModelButtonContent className="text-xs">{modelDisplayName}</ModelButtonContent>
+										</ModelDisplayButton>
+									</ModelButtonWrapper>
+								)}
 							</ModelContainer>
 						</ButtonGroup>
 					</div>

@@ -29,10 +29,14 @@ export async function commitModelSelection(
 	}
 
 	if (hasProviderCatalogStateController(controller)) {
-		controller.stateManager.setGlobalStateBatch({
+		const updates: Record<string, any> = {
 			[`${mode}ModeApiProvider`]: toLegacyApiProvider(providerId.toString()),
 			[getProviderModelIdKey(toLegacyApiProvider(providerId.toString()), mode)]: selection.modelId,
-		})
+		}
+		if (providerId.toString() === "ollama" && selection.overrides?.contextWindow) {
+			updates.ollamaApiOptionsCtxNum = String(selection.overrides.contextWindow)
+		}
+		controller.stateManager.setGlobalStateBatch(updates)
 		await controller.stateManager.flushPendingState?.()
 		const nextApiConfiguration = controller.stateManager.getApiConfiguration?.()
 		if (nextApiConfiguration) {

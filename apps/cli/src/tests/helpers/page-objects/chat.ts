@@ -9,7 +9,7 @@ const chatReadyTimeoutMs = 20_000;
 
 /** Wait for the main chat view to be ready */
 export async function waitForChatReady(terminal: Terminal): Promise<void> {
-	await expectVisible(terminal, "What can I do for you?", {
+	await expectVisible(terminal, "Cline, now with more K!", {
 		timeout: chatReadyTimeoutMs,
 	});
 }

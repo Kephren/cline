@@ -69,7 +69,7 @@ export function HomeView(props: {
 	const inputForeground = getModeInputForeground(session.uiMode, terminalBg);
 	const inputPlaceholder = getModeInputPlaceholder(session.uiMode, terminalBg);
 	const placeholder =
-		session.uiMode === "plan" ? "Plan something..." : "What can I do for you?";
+		session.uiMode === "plan" ? "Plan something..." : "Cline, now with more K!";
 	const modelDisplayName = resolveModelDisplayName(config);
 	const maxInputTokens = resolveModelMaxInputTokens(config);
 	const hasAutocomplete =
@@ -98,7 +98,7 @@ export function HomeView(props: {
 			<TrackedRobot cursorX={trackedCursorX} cursorY={trackedCursorY} />
 			<box marginTop={1} marginBottom={1} flexShrink={0}>
 				<text fg={defaultFg}>
-					<strong>What can I do for you?</strong>
+					<strong>Cline, now with more K!</strong>
 				</text>
 			</box>
 			<box marginBottom={1} flexShrink={0}>

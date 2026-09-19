@@ -7,7 +7,7 @@
 
 import { z } from "zod";
 
-export const INPUT_ARG_CHAR_LIMIT = 6000;
+export const INPUT_ARG_CHAR_LIMIT = 60000;
 
 /**
  * Schema for read tool input

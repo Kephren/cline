@@ -96,7 +96,7 @@ async function launchCli(
 
 /** Wait for the chat view to be fully rendered. */
 async function waitForChatView(session: Session): Promise<void> {
-	await session.waitForText("What can I do for you?", {
+	await session.waitForText("Cline, now with more K!", {
 		timeout: LAUNCH_TIMEOUT_MS,
 	});
 }
@@ -125,7 +125,7 @@ describe("cli tuistory e2e", () => {
 		await waitForChatView(session);
 
 		const screen = await session.text({ trimEnd: true });
-		expect(screen).toContain("What can I do for you?");
+		expect(screen).toContain("Cline, now with more K!");
 		expect(screen).toContain("○ Plan ● Act (Tab)");
 		expect(screen).toContain("Auto-approve all enabled (Shift+Tab)");
 	});
@@ -229,7 +229,7 @@ describe("cli tuistory e2e", () => {
 		});
 
 		const screen = await session.text();
-		expect(screen).toContain("What can I do for you?");
+		expect(screen).toContain("Cline, now with more K!");
 		expect(screen).not.toContain("Open ClinePass");
 
 		// The "shown" marker is persisted once the dialog is dismissed so the

@@ -145,6 +145,26 @@ export class MessageTranslatorState {
 	private openCompactionTs: number | undefined
 	/** Tool calls rejected by the user; they should not render as red tool failures. */
 	private deniedToolApprovalsByCallId = new Map<string, { toolName: string; reason: string }>()
+	private iterationStartTime: number | undefined
+	private firstTokenTime: number | undefined
+
+	setIterationStartTime(time: number): void {
+		this.iterationStartTime = time
+		this.firstTokenTime = undefined
+	}
+
+	recordFirstTokenTime(): void {
+		if (this.firstTokenTime === undefined) {
+			this.firstTokenTime = Date.now()
+		}
+	}
+
+	getIterationDurationSec(): number | undefined {
+		const start = this.firstTokenTime ?? this.iterationStartTime
+		if (start === undefined) return undefined
+		return Math.max(0.001, (Date.now() - start) / 1000)
+	}
+
 	/**
 	 * Process-wide id/seq/epoch authority. Shared with the interaction coordinator and history
 	 * rendering so that message ids never collide across generators. See message-id-minter.ts.
@@ -535,6 +555,8 @@ export class MessageTranslatorState {
 		this.clearApprovedToolMessageTs()
 		this.deniedToolApprovalsByCallId.clear()
 		this.clearSpawnAgents()
+		this.iterationStartTime = undefined
+		this.firstTokenTime = undefined
 	}
 
 	/**
@@ -1295,6 +1317,7 @@ function translateAgentEvent(event: AgentEvent, state: MessageTranslatorState): 
 
 	switch (event.type) {
 		case "content_start": {
+			state.recordFirstTokenTime()
 			switch (event.contentType) {
 				case "text": {
 					// The SDK emits MULTIPLE content_start events for streaming text.
@@ -1835,6 +1858,7 @@ function translateAgentEvent(event: AgentEvent, state: MessageTranslatorState): 
 		case "iteration_start": {
 			// New iteration — reset streaming state for the new turn
 			state.reset()
+			state.setIterationStartTime(Date.now())
 
 			// Emit an api_req_started message before each API request so the
 			// webview shows its request spinner and cost display.
@@ -1893,12 +1917,20 @@ function translateAgentEvent(event: AgentEvent, state: MessageTranslatorState): 
 			// api_req_started message's ClineApiReqInfo, so emit a follow-up
 			// api_req_started update carrying the usage data for cost display.
 			const usageEvent = normalizeUsageEvent(event)
+			const durationSec = state.getIterationDurationSec()
+			const tokensOut = usageEvent.tokensOut ?? 0
+			const tokensPerSecond =
+				durationSec && durationSec > 0.05 && tokensOut > 0
+					? Number((tokensOut / durationSec).toFixed(1))
+					: undefined
 			const apiReqInfo: ClineApiReqInfo = {
 				tokensIn: usageEvent.tokensIn,
 				tokensOut: usageEvent.tokensOut,
 				cacheWrites: usageEvent.cacheWrites,
 				cacheReads: usageEvent.cacheReads,
 				cost: usageEvent.totalCost,
+				durationMs: durationSec ? Math.round(durationSec * 1000) : undefined,
+				tokensPerSecond,
 			}
 			messages.push({
 				ts: state.nextTs(),

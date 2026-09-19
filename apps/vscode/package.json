@@ -1,6 +1,6 @@
 {
 	"name": "claude-dev",
-	"displayName": "Cline",
+	"displayName": "Kline",
 	"description": "Autonomous coding agent right in your IDE, capable of creating/editing files, running commands, using the browser, and more with your permission every step of the way.",
 	"version": "4.1.19",
 	"icon": "assets/icons/icon.png",
@@ -111,7 +111,7 @@
 			"activitybar": [
 				{
 					"id": "claude-dev-ActivityBar",
-					"title": "Cline",
+					"title": "Kline",
 					"icon": "assets/icons/icon.svg"
 				}
 			]
@@ -160,74 +160,74 @@
 			{
 				"command": "cline.dev.createTestTasks",
 				"title": "Create Test Tasks",
-				"category": "Cline",
+				"category": "Kline",
 				"when": "cline.isDevMode"
 			},
 			{
 				"command": "cline.dev.expireMcpOAuthTokens",
 				"title": "Expire MCP OAuth Tokens (for testing)",
-				"category": "Cline",
+				"category": "Kline",
 				"when": "cline.isDevMode"
 			},
 			{
 				"command": "cline.addToChat",
-				"title": "Add to Cline",
-				"category": "Cline"
+				"title": "Add to Kline",
+				"category": "Kline"
 			},
 			{
 				"command": "cline.addTerminalOutputToChat",
-				"title": "Add to Cline",
-				"category": "Cline"
+				"title": "Add to Kline",
+				"category": "Kline"
 			},
 			{
 				"command": "cline.focusChatInput",
 				"title": "Jump to Chat Input",
-				"category": "Cline"
+				"category": "Kline"
 			},
 			{
 				"command": "cline.generateGitCommitMessage",
-				"title": "Generate Commit Message with Cline",
-				"category": "Cline",
+				"title": "Generate Commit Message with Kline",
+				"category": "Kline",
 				"icon": "$(cline-icon)"
 			},
 			{
 				"command": "cline.abortGitCommitMessage",
-				"title": "Generate Commit Message with Cline - Stop",
-				"category": "Cline",
+				"title": "Generate Commit Message with Kline - Stop",
+				"category": "Kline",
 				"icon": "$(debug-stop)"
 			},
 			{
 				"command": "cline.explainCode",
-				"title": "Explain with Cline",
-				"category": "Cline"
+				"title": "Explain with Kline",
+				"category": "Kline"
 			},
 			{
 				"command": "cline.improveCode",
-				"title": "Improve with Cline",
-				"category": "Cline"
+				"title": "Improve with Kline",
+				"category": "Kline"
 			},
 			{
 				"command": "cline.jupyterGenerateCell",
-				"title": "Generate Jupyter Cell with Cline",
-				"category": "Cline",
+				"title": "Generate Jupyter Cell with Kline",
+				"category": "Kline",
 				"icon": "$(sparkle)"
 			},
 			{
 				"command": "cline.jupyterExplainCell",
-				"title": "Explain Jupyter Cell with Cline",
-				"category": "Cline",
+				"title": "Explain Jupyter Cell with Kline",
+				"category": "Kline",
 				"icon": "$(question)"
 			},
 			{
 				"command": "cline.jupyterImproveCell",
-				"title": "Improve Jupyter Cell with Cline",
-				"category": "Cline",
+				"title": "Improve Jupyter Cell with Kline",
+				"category": "Kline",
 				"icon": "$(lightbulb)"
 			},
 			{
 				"command": "cline.openWalkthrough",
 				"title": "Open Walkthrough",
-				"category": "Cline"
+				"category": "Kline"
 			}
 		],
 		"keybindings": [
@@ -336,7 +336,7 @@
 			]
 		},
 		"configuration": {
-			"title": "Cline",
+			"title": "Kline",
 			"properties": {}
 		}
 	},
