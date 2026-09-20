@@ -115,7 +115,7 @@ interface GitCommit {
 const PLAN_MODE_COLOR = "var(--vscode-activityWarningBadge-background)"
 const ACT_MODE_COLOR = "var(--vscode-focusBorder)"
 
-const CONTEXT_SIZES = [2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144] as const
+const CONTEXT_SIZES = [1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144, 524288, 1048576] as const
 
 function formatContextSizeLabel(tokens: number): string {
 	if (tokens >= 1024) {

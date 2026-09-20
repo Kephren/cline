@@ -348,7 +348,7 @@ export interface ShellExecutorOptions {
 	 * middle-truncated: the head and tail are preserved and the middle is
 	 * elided, since build and test failures usually live at the end of the
 	 * output.
-	 * @default 48_000 — see MAX_COMMAND_OUTPUT_CHARS in output-limits.ts
+	 * @default 192_000 — see MAX_COMMAND_OUTPUT_CHARS in output-limits.ts
 	 */
 	maxOutputChars?: number;
 

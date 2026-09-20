@@ -20,7 +20,7 @@ describe("createSearchExecutor", () => {
 		// each line stays under the per-line truncation limit.
 		const rows = Array.from(
 			{ length: 200 },
-			(_, i) => `needle ${"x".repeat(900)} row-${i}`,
+			(_, i) => `needle ${"x".repeat(1950)} row-${i}`,
 		);
 		await fs.writeFile(filePath, rows.join("\n"), "utf-8");
 
@@ -30,7 +30,7 @@ describe("createSearchExecutor", () => {
 			const result = await search("(?=needle)", dir, ctx);
 
 			expect(result.length).toBeGreaterThan(MAX_SEARCH_OUTPUT_CHARS);
-			expect(result.length).toBeLessThanOrEqual(50_000);
+			expect(result.length).toBeLessThanOrEqual(200_000);
 			expect(result).toContain("Found 100 results for pattern");
 			expect(result).toContain("search output truncated");
 			expect(result).toContain("Narrow the pattern or scope");

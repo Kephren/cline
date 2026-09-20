@@ -25,7 +25,7 @@ import {
 	validateAndReserveImageMedia,
 } from "@cline/shared";
 
-export const DEFAULT_MAX_TOOL_RESULT_CHARS = 8_000;
+export const DEFAULT_MAX_TOOL_RESULT_CHARS = 32_000;
 export const DEFAULT_MAX_FILE_CONTENT_CHARS = 50_000;
 // The aggregate budget intentionally stays far above what the per-result cap
 // usually produces: budget truncation rewrites bytes mid-transcript, which

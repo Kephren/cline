@@ -104,4 +104,61 @@ describe("ActionButtons", () => {
 		expect(screen.getByRole("button", { name: "Save" })).not.toBeDisabled()
 		expect(screen.getByRole("button", { name: "Reject" })).not.toBeDisabled()
 	})
+
+	it("renders processing status bar with 'Thinking...' and Cancel button during streaming", async () => {
+		mockTurnState.mockReturnValue({ phase: "streaming", seq: 1 })
+		const executeButtonAction = vi.fn().mockResolvedValue(undefined)
+		const messageHandlers = {
+			executeButtonAction,
+		} as unknown as MessageHandlers
+
+		const task: ClineMessage = {
+			ts: 1,
+			type: "say",
+			say: "api_req_started",
+			text: JSON.stringify({ request: "test" }),
+			partial: true,
+		}
+
+		render(
+			<ActionButtons
+				chatState={makeChatState()}
+				messageHandlers={messageHandlers}
+				messages={[task]}
+				mode="act"
+				task={task}
+			/>,
+		)
+
+		expect(screen.getByText("Thinking...")).toBeInTheDocument()
+		const cancelButton = screen.getByRole("button", { name: "Cancel" })
+		expect(cancelButton).toBeInTheDocument()
+		expect(cancelButton).not.toBeDisabled()
+
+		fireEvent.click(cancelButton)
+		expect(executeButtonAction).toHaveBeenCalledWith("cancel", "", [], [])
+	})
+
+	it("renders 'Searching codebase...' when active tool is searchFiles", () => {
+		mockTurnState.mockReturnValue({ phase: "streaming", seq: 2 })
+		const task: ClineMessage = {
+			ts: 1,
+			type: "ask",
+			ask: "tool",
+			text: JSON.stringify({ tool: "searchFiles", path: "src", regex: "test" }),
+			partial: true,
+		}
+
+		render(
+			<ActionButtons
+				chatState={makeChatState()}
+				messageHandlers={{ executeButtonAction: vi.fn() } as unknown as MessageHandlers}
+				messages={[task]}
+				mode="act"
+				task={task}
+			/>,
+		)
+
+		expect(screen.getByText("Searching codebase...")).toBeInTheDocument()
+	})
 })

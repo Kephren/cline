@@ -17,6 +17,8 @@ service ModelsService {
   rpc getOllamaModelStatus(StringRequest) returns (OllamaModelStatusResponse);
   // Unloads running model from Ollama VRAM/memory (/api/generate with keep_alive: 0)
   rpc unloadOllamaModel(UnloadOllamaModelRequest) returns (Empty);
+  // Reloads running model in Ollama with new options (num_ctx)
+  rpc reloadOllamaModel(ReloadOllamaModelRequest) returns (Empty);
   // Fetches available models from LM Studio
   rpc getLmStudioModels(StringRequest) returns (StringArray);
   // Fetches available models from VS Code LM API
@@ -75,6 +77,13 @@ service ModelsService {
 message UnloadOllamaModelRequest {
   optional string base_url = 1;
   optional string model_name = 2;
+}
+
+// Request to reload a model in Ollama with new context size
+message ReloadOllamaModelRequest {
+  optional string base_url = 1;
+  optional string model_name = 2;
+  int32 context_window = 3;
 }
 
 // Status of active/loaded model in Ollama (/api/ps)

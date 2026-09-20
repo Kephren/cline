@@ -55,10 +55,10 @@ export const EXIT_CODE_EVENT_TIMEOUT_MS = 3_000
 export const MAX_FULL_OUTPUT_SIZE = 1024 * 1024 // 1MB
 
 /** Maximum lines to return from getUnretrievedOutput */
-export const MAX_UNRETRIEVED_LINES = 500
+export const MAX_UNRETRIEVED_LINES = 2_000
 
 /** Lines to keep at start/end when truncating unretrieved output */
-export const TRUNCATE_KEEP_LINES = 100
+export const TRUNCATE_KEEP_LINES = 400
 
 // =============================================================================
 // Compilation Detection Markers

@@ -180,16 +180,16 @@ describe("createFileReadExecutor", () => {
 	});
 
 	it("caps the returned window by characters for dense files", async () => {
-		// 1500 lines of 100 chars each is ~150k chars, well over the ~50k cap
+		// 1500 lines of 150 chars each is ~225k chars, well over the ~192k cap
 		// while staying under the 2000-line cap.
 		const result = await readTempFile(
-			Array.from({ length: 1500 }, () => "z".repeat(100)).join("\n"),
+			Array.from({ length: 1500 }, () => "z".repeat(150)).join("\n"),
 		);
 
 		// Bounded by the read window cap; the pagination notice sits at the
 		// end of the kept window, inside the tail that any downstream
 		// provider-request middle-cut preserves.
-		expect(result.length).toBeLessThanOrEqual(50_000);
+		expect(result.length).toBeLessThanOrEqual(200_000);
 		expect(result).toContain("of 1500. Use start_line/end_line");
 	});
 
@@ -198,7 +198,7 @@ describe("createFileReadExecutor", () => {
 			Array.from({ length: 10_000 }, () => "z".repeat(100)).join("\n"),
 		);
 
-		expect(result.length).toBeLessThanOrEqual(50_000);
+		expect(result.length).toBeLessThanOrEqual(200_000);
 		expect(result).toContain("of 10000. Use start_line/end_line");
 	});
 

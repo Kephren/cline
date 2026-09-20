@@ -6,6 +6,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useExtensionState } from "../../../../../context/ExtensionStateContext"
 import { ButtonActionType, getButtonConfigFromState } from "../../shared/buttonConfig"
 import type { ChatState, MessageHandlers } from "../../types/chatTypes"
+import { isPendingResponseUnconfirmed } from "../../utils/pendingResponse"
+import { ProcessingStatusBar } from "./ProcessingStatusBar"
 
 interface ActionButtonsProps {
 	task?: ClineMessage
@@ -16,7 +18,7 @@ interface ActionButtonsProps {
 }
 
 /**
- * Action buttons area including approve/reject buttons
+ * Action buttons area including approve/reject buttons and processing status
  */
 export const ActionButtons: React.FC<ActionButtonsProps> = ({ task, messages, chatState, mode, messageHandlers }) => {
 	const { inputValue, selectedImages, selectedFiles, setSendingDisabled } = chatState
@@ -121,11 +123,38 @@ export const ActionButtons: React.FC<ActionButtonsProps> = ({ task, messages, ch
 	const isStreaming = task.partial === true
 	const canInteract = enableButtons && !isProcessing
 
+	const isPending = isPendingResponseUnconfirmed(chatState.pendingResponse, turnState, messages.length)
+	const isStreamingState =
+		turnState?.phase === "streaming" ||
+		isStreaming ||
+		isPending ||
+		(secondaryAction === "cancel" && buttonConfig.sendingDisabled)
+
+	if (isStreamingState) {
+		return (
+			<ProcessingStatusBar
+				canInteract={canInteract}
+				foregroundCommandRunning={foregroundCommandRunning}
+				inputValue={inputValue}
+				lastMessage={lastMessage}
+				messages={messages}
+				onAction={handleActionClick}
+				primaryAction={primaryAction}
+				primaryText={primaryText}
+				secondaryAction={secondaryAction}
+				secondaryText={secondaryText}
+				selectedFiles={selectedFiles}
+				selectedImages={selectedImages}
+				turnState={turnState}
+			/>
+		)
+	}
+
 	if (!hasButtons) {
 		return null
 	}
 
-	const opacity = canInteract || isStreaming ? 1 : 0.5
+	const opacity = canInteract ? 1 : 0.5
 
 	return (
 		<div className="flex px-3.5" style={{ opacity }}>

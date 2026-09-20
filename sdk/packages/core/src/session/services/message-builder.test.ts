@@ -211,7 +211,7 @@ describe("MessageBuilder", () => {
 	});
 
 	it("uses an aggressive per-result cap and a loose aggregate budget", () => {
-		expect(DEFAULT_MAX_TOOL_RESULT_CHARS).toBe(8_000);
+		expect(DEFAULT_MAX_TOOL_RESULT_CHARS).toBe(32_000);
 		expect(DEFAULT_MAX_FILE_CONTENT_CHARS).toBe(50_000);
 		// The aggregate budget stays loose on purpose: budget truncation
 		// rewrites mid-transcript bytes and breaks provider prefix caching, so
@@ -820,7 +820,7 @@ describe("MessageBuilder with structured ToolOperationResult content", () => {
 			);
 		}
 		const previousDefaults = new MessageBuilder({
-			maxToolResultChars: 50_000,
+			maxToolResultChars: 200_000,
 			maxTotalTextBytes: 6_000_000,
 		});
 		const currentDefaults = new MessageBuilder();
@@ -834,7 +834,7 @@ describe("MessageBuilder with structured ToolOperationResult content", () => {
 
 		expect(previousPayload.length).toBeGreaterThan(900_000);
 		expect(currentPayload.length).toBeLessThan(previousPayload.length * 0.25);
-		expect(currentPayload.length).toBeLessThan(250_000);
+		expect(currentPayload.length).toBeLessThan(750_000);
 		expect(currentPayload).not.toContain(MIDDLE_SENTINEL);
 	});
 
@@ -2019,7 +2019,7 @@ describe("MessageBuilder outdated-read rewrite batching (prefix-cache stability)
 	});
 
 	it("uses provider-bound stale bytes after per-result truncation", () => {
-		const builder = new MessageBuilder({ minOutdatedRewriteBytes: 20_000 });
+		const builder = new MessageBuilder({ minOutdatedRewriteBytes: 50_000 });
 		const messages: Message[] = [
 			{ role: "user", content: "task" },
 			readToolUse("t1"),
@@ -2031,7 +2031,7 @@ describe("MessageBuilder outdated-read rewrite batching (prefix-cache stability)
 		const result = builder.buildForApi(messages);
 
 		// Raw t1 history is ~140KB, but the provider-bound stale entry is capped
-		// near 8KB before threshold accounting. A 20KB threshold must defer.
+		// near 32KB before threshold accounting. A 50KB threshold must defer.
 		expect(JSON.stringify(result[2])).not.toContain("outdated");
 		expect(JSON.stringify(result[2])).toContain("...[truncated");
 	});
