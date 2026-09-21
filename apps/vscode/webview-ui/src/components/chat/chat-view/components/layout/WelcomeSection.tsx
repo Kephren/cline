@@ -2,7 +2,7 @@ import { BANNER_DATA, BannerAction, BannerActionType, BannerCardData } from "@sh
 import { EmptyRequest } from "@shared/proto/cline/common"
 import type { Worktree } from "@shared/proto/cline/worktree"
 import { TrackWorktreeViewOpenedRequest } from "@shared/proto/cline/worktree"
-import { GitBranch, Sparkles } from "lucide-react"
+import { GitBranch, LoaderCircleIcon, Sparkles } from "lucide-react"
 import React, { useCallback, useEffect, useMemo, useState } from "react"
 import BannerCarousel, { BannerData } from "@/components/common/BannerCarousel"
 import WhatsNewModal from "@/components/common/WhatsNewModal"
@@ -37,8 +37,13 @@ export const WelcomeSection: React.FC<WelcomeSectionProps> = ({
 	taskHistory,
 	shouldShowQuickWins,
 }) => {
-	const { lastDismissedInfoBannerVersion, lastDismissedCliBannerVersion, lastDismissedModelBannerVersion, dismissedBanners } =
-		useExtensionState()
+	const {
+		lastDismissedInfoBannerVersion,
+		lastDismissedCliBannerVersion,
+		lastDismissedModelBannerVersion,
+		dismissedBanners,
+		didHydrateState,
+	} = useExtensionState()
 
 	// Track if we've shown the "What's New" modal this session
 	const [hasShownWhatsNewModal, setHasShownWhatsNewModal] = useState(false)
@@ -326,7 +331,15 @@ export const WelcomeSection: React.FC<WelcomeSectionProps> = ({
 				{!showWhatsNewModal && (
 					<>
 						<BannerCarousel banners={activeBanners} />
-						{!shouldShowQuickWins && taskHistory.length > 0 && <HistoryPreview showHistoryView={showHistoryView} />}
+						{!shouldShowQuickWins &&
+							(!didHydrateState ? (
+								<div className="flex items-center gap-2 px-5 py-3 text-xs text-(--vscode-descriptionForeground)">
+									<LoaderCircleIcon className="w-3.5 h-3.5 animate-spin shrink-0" />
+									<span>Loading past sessions...</span>
+								</div>
+							) : taskHistory.length > 0 ? (
+								<HistoryPreview showHistoryView={showHistoryView} />
+							) : null)}
 						{/* Quick launch worktree button */}
 						{isGitRepo && worktreesEnabled?.featureFlag && worktreesEnabled?.user && (
 							<div className="flex flex-col items-center gap-3 mt-2 mb-4 px-5">

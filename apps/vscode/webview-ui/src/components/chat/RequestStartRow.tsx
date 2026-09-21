@@ -231,6 +231,16 @@ export const RequestStartRow: React.FC<RequestStartRowProps> = ({
 					</div>
 				</div>
 			)}
+			{apiReqState === "pre" && !shouldShowActivities && !reasoningContent && (
+				<div className="ml-1 pl-0 mb-1 -mt-1.25 pt-1">
+					<div className="inline-flex items-center gap-1.5 text-left select-none px-0 w-full">
+						<LoaderCircleIcon className="size-3.5 animate-spin text-[var(--vscode-progressBar-background)] shrink-0" />
+						<span className="animate-shimmer bg-linear-90 from-foreground to-description bg-[length:200%_100%] bg-clip-text text-transparent text-[13px] leading-none">
+							Waiting for model response...
+						</span>
+					</div>
+				</div>
+			)}
 			{reasoningContent &&
 				(!hasCost ? (
 					// Still streaming - show "Thinking..." text with shimmer

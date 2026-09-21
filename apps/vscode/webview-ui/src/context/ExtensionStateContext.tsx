@@ -45,6 +45,8 @@ interface ProviderModelsState {
 
 export interface ExtensionStateContextType extends ExtensionState {
 	didHydrateState: boolean
+	hydrationError?: string
+	retryHydrateState?: () => void
 	showWelcome: boolean
 	onboardingModels: OnboardingModelGroup | undefined
 	openRouterModels: Record<string, ModelInfo>
@@ -326,6 +328,7 @@ export const ExtensionStateContextProvider: React.FC<{
 	})
 	const [expandTaskHeader, setExpandTaskHeader] = useState(true)
 	const [didHydrateState, setDidHydrateState] = useState(false)
+	const [hydrationError, setHydrationError] = useState<string | undefined>(undefined)
 
 	const [showWelcome, setShowWelcome] = useState(false)
 	const [onboardingModels, setOnboardingModels] = useState<OnboardingModelGroup | undefined>(undefined)
@@ -441,9 +444,12 @@ export const ExtensionStateContextProvider: React.FC<{
 	// arrival order, duplication, or loss. See messageReducer.ts.
 	const replicaRef = useRef<ReplicaState>(createReplicaState())
 
-	// Subscribe to state updates and UI events using the gRPC streaming API
-	useEffect(() => {
-		// Set up state subscription
+	const setupStateSubscription = useCallback(() => {
+		if (stateSubscriptionRef.current) {
+			stateSubscriptionRef.current()
+			stateSubscriptionRef.current = null
+		}
+		setHydrationError(undefined)
 		stateSubscriptionRef.current = StateServiceClient.subscribeToState(EmptyRequest.create({}), {
 			onResponse: (response: any) => {
 				if (response.stateJson) {
@@ -490,23 +496,48 @@ export const ExtensionStateContextProvider: React.FC<{
 							}
 
 							setDidHydrateState(true)
+							setHydrationError(undefined)
 
 							return newState
 						})
 					} catch (error) {
 						console.error("Error parsing state JSON:", error)
 						console.log("[DEBUG] ERR getting state", error)
+						setHydrationError("Failed to parse state from extension host")
 					}
 				}
 				console.log('[DEBUG] ended "got subscribed state"')
 			},
 			onError: (error: any) => {
 				console.error("Error in state subscription:", error)
+				setHydrationError(error?.message || "Connection to Cline extension host failed")
 			},
 			onComplete: () => {
 				console.log("State subscription completed")
 			},
 		})
+	}, [showWelcome])
+
+	const retryHydrateState = useCallback(() => {
+		setupStateSubscription()
+	}, [setupStateSubscription])
+
+	useEffect(() => {
+		if (didHydrateState) {
+			return
+		}
+		const timer = setTimeout(() => {
+			if (!didHydrateState) {
+				setHydrationError((prev) => prev ?? "Connecting to Cline extension host is taking longer than expected.")
+			}
+		}, 8000)
+		return () => clearTimeout(timer)
+	}, [didHydrateState])
+
+	// Subscribe to state updates and UI events using the gRPC streaming API
+	useEffect(() => {
+		// Set up state subscription
+		setupStateSubscription()
 
 		// Subscribe to MCP button clicked events with webview type
 		mcpButtonUnsubscribeRef.current = UiServiceClient.subscribeToMcpButtonClicked(
@@ -930,6 +961,8 @@ export const ExtensionStateContextProvider: React.FC<{
 	const contextValue: ExtensionStateContextType = {
 		...state,
 		didHydrateState,
+		hydrationError,
+		retryHydrateState,
 		showWelcome,
 		onboardingModels,
 		openRouterModels,

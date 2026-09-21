@@ -68,11 +68,7 @@ const AppContent = () => {
 		}
 	}, [clineUser?.uid, clineUser?.appBaseUrl])
 
-	if (!didHydrateState) {
-		return null
-	}
-
-	if (showWelcome) {
+	if (didHydrateState && showWelcome) {
 		return <OnboardingView />
 	}
 

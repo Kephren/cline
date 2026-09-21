@@ -16,6 +16,7 @@ import {
 	AtSignIcon,
 	CpuIcon,
 	DatabaseIcon,
+	LoaderCircleIcon,
 	MinusIcon,
 	PlusIcon,
 	PowerOffIcon,
@@ -324,6 +325,7 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 			navigateToSettingsModelPicker,
 			mcpServers,
 			clineMessages,
+			didHydrateState,
 		} = useExtensionState()
 
 		const latestInferenceSpeed = useMemo(() => calculateLatestInferenceSpeed(clineMessages), [clineMessages])
@@ -1465,6 +1467,9 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 
 		// Get model display name
 		const modelDisplayName = useMemo(() => {
+			if (!didHydrateState) {
+				return "Loading model..."
+			}
 			const {
 				vsCodeLmModelSelector,
 				togetherModelId,
@@ -1481,35 +1486,35 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 			}
 			switch (selectedProvider) {
 				case "cline":
-					return `${selectedProvider}:${selectedModelId}`
+					return `${selectedProvider}:${selectedModelId || "..."}`
 				case "cline-pass":
 					// Free models selected on ClinePass go through Cline usage billing,
 					// so label them the same way as the cline provider
 					return selectedModelId.startsWith("cline-pass/")
 						? `${selectedProvider}:${selectedModelId.replace(/^cline-pass\//, "")}`
-						: `cline:${selectedModelId}`
+						: `cline:${selectedModelId || "..."}`
 				case "openai":
-					return `openai-compat:${selectedModelId}`
+					return `openai-compat:${selectedModelId || "..."}`
 				case "vscode-lm":
 					return `vscode-lm:${vsCodeLmModelSelector ? `${vsCodeLmModelSelector.vendor ?? ""}/${vsCodeLmModelSelector.family ?? ""}` : unknownModel}`
 				case "together":
-					return `${selectedProvider}:${togetherModelId}`
+					return `${selectedProvider}:${togetherModelId || "..."}`
 				case "lmstudio":
-					return `${selectedProvider}:${lmStudioModelId}`
+					return `${selectedProvider}:${lmStudioModelId || "..."}`
 				case "ollama":
-					return `${selectedProvider}:${ollamaModelId}`
+					return `${selectedProvider}:${ollamaModelId || "..."}`
 				case "litellm":
-					return `${selectedProvider}:${liteLlmModelId}`
+					return `${selectedProvider}:${liteLlmModelId || "..."}`
 				case "requesty":
-					return `${selectedProvider}:${requestyModelId}`
+					return `${selectedProvider}:${requestyModelId || "..."}`
 				case "vercel-ai-gateway":
-					return `${selectedProvider}:${vercelAiGatewayModelId || selectedModelId}`
+					return `${selectedProvider}:${vercelAiGatewayModelId || selectedModelId || "..."}`
 				case "anthropic":
 				case "openrouter":
 				default:
-					return `${selectedProvider}:${selectedModelId}`
+					return `${selectedProvider || "model"}:${selectedModelId || "..."}`
 			}
-		}, [apiConfiguration, mode, selectedProvider, selectedModelId])
+		}, [apiConfiguration, mode, selectedProvider, selectedModelId, didHydrateState])
 
 		// Function to show error message for unsupported files for drag and drop
 		const showUnsupportedFileErrorMessage = () => {
@@ -2018,51 +2023,53 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 							title={`${CONTEXT_SIZES[sliderIndex].toLocaleString()} tokens`}>
 							{formatContextSizeLabel(CONTEXT_SIZES[sliderIndex])}
 						</span>
-						<div
-							className="flex items-center rounded border border-[var(--vscode-input-border)] bg-[var(--vscode-input-background)] text-[10px] font-mono shrink-0 select-none overflow-hidden h-5"
-							title="Temperature: 0.0 - 1.0 (0.1 step, default 0.8)">
+						{selectedProvider === "ollama" && (
 							<div
-								className="pl-1.5 pr-0.5 text-[var(--vscode-descriptionForeground)] flex items-center cursor-help"
-								title={`Temperature: ${temperature.toFixed(1)}`}>
-								<ThermometerIcon size={11} />
+								className="flex items-center rounded border border-[var(--vscode-input-border)] bg-[var(--vscode-input-background)] text-[10px] font-mono shrink-0 select-none overflow-hidden h-5"
+								title="Temperature: 0.0 - 1.0 (0.1 step, default 0.8)">
+								<div
+									className="pl-1.5 pr-0.5 text-[var(--vscode-descriptionForeground)] flex items-center cursor-help"
+									title={`Temperature: ${temperature.toFixed(1)}`}>
+									<ThermometerIcon size={11} />
+								</div>
+								<button
+									type="button"
+									onClick={() => handleTemperatureStep(-0.1)}
+									disabled={temperature <= 0.05}
+									className="px-1 h-full flex items-center justify-center text-[var(--vscode-foreground)] hover:bg-[var(--vscode-toolbar-hoverBackground)] cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed border-0 bg-transparent transition-colors"
+									aria-label="Decrease temperature"
+									title="Decrease temperature (-0.1)"
+									data-testid="temperature-decrement">
+									<MinusIcon size={10} />
+								</button>
+								<input
+									type="number"
+									min={0}
+									max={1}
+									step={0.1}
+									value={temperature.toFixed(1)}
+									onChange={(e) => {
+										const val = parseFloat(e.target.value)
+										if (!isNaN(val)) {
+											void handleTemperatureSelect(val)
+										}
+									}}
+									className="w-[26px] h-full bg-transparent text-center text-[10px] font-mono text-[var(--vscode-foreground)] focus:outline-none border-0 p-0 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+									data-testid="temperature-input"
+									title="Temperature: 0.0 to 1.0 (default 0.8)"
+								/>
+								<button
+									type="button"
+									onClick={() => handleTemperatureStep(0.1)}
+									disabled={temperature >= 0.95}
+									className="px-1 h-full flex items-center justify-center text-[var(--vscode-foreground)] hover:bg-[var(--vscode-toolbar-hoverBackground)] cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed border-0 bg-transparent transition-colors"
+									aria-label="Increase temperature"
+									title="Increase temperature (+0.1)"
+									data-testid="temperature-increment">
+									<PlusIcon size={10} />
+								</button>
 							</div>
-							<button
-								type="button"
-								onClick={() => handleTemperatureStep(-0.1)}
-								disabled={temperature <= 0.05}
-								className="px-1 h-full flex items-center justify-center text-[var(--vscode-foreground)] hover:bg-[var(--vscode-toolbar-hoverBackground)] cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed border-0 bg-transparent transition-colors"
-								aria-label="Decrease temperature"
-								title="Decrease temperature (-0.1)"
-								data-testid="temperature-decrement">
-								<MinusIcon size={10} />
-							</button>
-							<input
-								type="number"
-								min={0}
-								max={1}
-								step={0.1}
-								value={temperature.toFixed(1)}
-								onChange={(e) => {
-									const val = parseFloat(e.target.value)
-									if (!isNaN(val)) {
-										void handleTemperatureSelect(val)
-									}
-								}}
-								className="w-[26px] h-full bg-transparent text-center text-[10px] font-mono text-[var(--vscode-foreground)] focus:outline-none border-0 p-0 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-								data-testid="temperature-input"
-								title="Temperature: 0.0 to 1.0 (default 0.8)"
-							/>
-							<button
-								type="button"
-								onClick={() => handleTemperatureStep(0.1)}
-								disabled={temperature >= 0.95}
-								className="px-1 h-full flex items-center justify-center text-[var(--vscode-foreground)] hover:bg-[var(--vscode-toolbar-hoverBackground)] cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed border-0 bg-transparent transition-colors"
-								aria-label="Increase temperature"
-								title="Increase temperature (+0.1)"
-								data-testid="temperature-increment">
-								<PlusIcon size={10} />
-							</button>
-						</div>
+						)}
 						<span
 							className="flex items-center gap-1 shrink-0 px-1.5 py-0.5 rounded bg-[var(--vscode-badge-background)] text-[var(--vscode-badge-foreground)] text-[10px] font-mono select-none"
 							data-testid="inference-speed"
@@ -2139,7 +2146,9 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 											title={`Ollama model for ${mode} mode: ${selectedModelId || "None"}`}
 											value={selectedModelId || ""}>
 											{ollamaModels.length === 0 && !selectedModelId && (
-												<option value="">No models found</option>
+												<option value="">
+													{isRefreshingOllama ? "Loading Ollama models..." : "No Ollama models found"}
+												</option>
 											)}
 											{selectedModelId && !ollamaModels.includes(selectedModelId) && (
 												<option key={selectedModelId} value={selectedModelId}>
@@ -2179,7 +2188,10 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 											role="button"
 											tabIndex={0}
 											title="Open API Settings">
-											<ModelButtonContent className="text-xs">{modelDisplayName}</ModelButtonContent>
+											<ModelButtonContent className="text-xs flex items-center gap-1">
+												{!didHydrateState && <LoaderCircleIcon className="w-3 h-3 animate-spin inline shrink-0" />}
+												{modelDisplayName}
+											</ModelButtonContent>
 										</ModelDisplayButton>
 									</ModelButtonWrapper>
 								)}

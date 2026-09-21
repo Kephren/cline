@@ -137,8 +137,14 @@ const ErrorRow = memo(({ message, errorType, apiRequestFailedMessage, apiReqStre
 						)
 					}
 
+					const isTimeout =
+						errorMessage?.toLowerCase()?.includes("timeout") ||
+						errorMessage?.toLowerCase()?.includes("timed out") ||
+						rawApiError?.toLowerCase()?.includes("timeout") ||
+						rawApiError?.toLowerCase()?.includes("timed out")
+
 					return (
-						<p className="m-0 whitespace-pre-wrap text-error wrap-anywhere flex flex-col gap-3">
+						<div className="m-0 whitespace-pre-wrap text-error wrap-anywhere flex flex-col gap-3">
 							{/* Display the well-formatted error extracted from the ClineError instance */}
 
 							<header>
@@ -147,6 +153,13 @@ const ErrorRow = memo(({ message, errorType, apiRequestFailedMessage, apiReqStre
 								{errorMessage}
 								{requestId && <div>Request ID: {requestId}</div>}
 							</header>
+
+							{/* Timeout Guidance */}
+							{isTimeout && (
+								<div className="text-xs text-[var(--vscode-descriptionForeground)] rounded border border-neutral-500/30 p-2 bg-[var(--vscode-editor-background)]">
+									The model request timed out before responding. This can happen if the model provider is experiencing high latency or server downtime. You can retry the request or choose a different model in Settings.
+								</div>
+							)}
 
 							{/* Windows Powershell Issue */}
 							{errorMessage?.toLowerCase()?.includes("powershell") && (
@@ -163,12 +176,25 @@ const ErrorRow = memo(({ message, errorType, apiRequestFailedMessage, apiReqStre
 
 							{/* Display raw API error if different from parsed error message */}
 							{errorMessage !== rawApiError && <div>{rawApiError}</div>}
-						</p>
+						</div>
 					)
 				}
 
 				// Regular error message
-				return <p className="m-0 mt-0 whitespace-pre-wrap text-error wrap-anywhere">{message.text}</p>
+				const isRegularTimeout =
+					message.text?.toLowerCase()?.includes("timeout") ||
+					message.text?.toLowerCase()?.includes("timed out")
+
+				return (
+					<div className="m-0 mt-0 flex flex-col gap-2">
+						<p className="m-0 whitespace-pre-wrap text-error wrap-anywhere">{message.text}</p>
+						{isRegularTimeout && (
+							<div className="text-xs text-[var(--vscode-descriptionForeground)] rounded border border-neutral-500/30 p-2 bg-[var(--vscode-editor-background)]">
+								The model request timed out before responding. This can happen if the model provider is experiencing high latency or server downtime. You can retry the request or choose a different model in Settings.
+							</div>
+						)}
+					</div>
+				)
 
 			case "diff_error":
 				return (
