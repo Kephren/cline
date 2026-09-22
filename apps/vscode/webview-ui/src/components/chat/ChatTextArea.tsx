@@ -7,8 +7,8 @@ import {
 	WriteProviderConfigPatch,
 	WriteProviderConfigRequest,
 } from "@shared/proto/cline/models"
-import { toProtobufModelOverrides } from "@shared/proto-conversions/models/modelOverrides"
 import { PlanActMode, TogglePlanActModeRequest } from "@shared/proto/cline/state"
+import { toProtobufModelOverrides } from "@shared/proto-conversions/models/modelOverrides"
 import { type SlashCommand } from "@shared/slashCommands"
 import { Mode } from "@shared/storage/types"
 import { VSCodeButton } from "@vscode/webview-ui-toolkit/react"
@@ -116,11 +116,18 @@ interface GitCommit {
 const PLAN_MODE_COLOR = "var(--vscode-activityWarningBadge-background)"
 const ACT_MODE_COLOR = "var(--vscode-focusBorder)"
 
-const CONTEXT_SIZES = [1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144, 524288, 1048576] as const
+const CONTEXT_SIZES = [
+	1024, 1536, 2048, 3072, 4096, 6144, 8192, 12288, 16384, 24576, 32768, 49152, 65536, 98304, 131072, 196608, 262144, 393216,
+	524288, 786432, 1048576,
+] as const
 
 function formatContextSizeLabel(tokens: number): string {
 	if (tokens >= 1024) {
-		return `${Math.round(tokens / 1024)}K`
+		const k = tokens / 1024
+		if (k % 1 === 0) {
+			return `${k}K`
+		}
+		return `${Number(k.toFixed(1))}K`
 	}
 	return `${tokens}`
 }
@@ -1348,18 +1355,18 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 		// Temperature state & sync
 		const modelTemp = selectedModelInfo?.temperature
 		const [temperature, setTemperature] = useState<number>(
-			typeof modelTemp === "number" && Number.isFinite(modelTemp) ? modelTemp : 0.8,
+			typeof modelTemp === "number" && Number.isFinite(modelTemp) ? Math.max(0, Math.min(2, modelTemp)) : 0.8,
 		)
 
 		useEffect(() => {
 			if (typeof modelTemp === "number" && Number.isFinite(modelTemp)) {
-				setTemperature(modelTemp)
+				setTemperature(Math.max(0, Math.min(2, modelTemp)))
 			}
 		}, [modelTemp])
 
 		const handleTemperatureSelect = useCallback(
 			async (newTemp: number) => {
-				const clamped = Math.max(0, Math.min(1, Math.round(newTemp * 10) / 10))
+				const clamped = Math.max(0, Math.min(2, Math.round(newTemp * 10) / 10))
 				setTemperature(clamped)
 				if (!selectedModelId) return
 				try {
@@ -1411,23 +1418,10 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 			[mode, contextSize, temperature],
 		)
 
-		const sliderIndex = useMemo(() => {
-			let closest = 0
-			let minDiff = Infinity
-			CONTEXT_SIZES.forEach((size, idx) => {
-				const diff = Math.abs(size - (contextSize || 32768))
-				if (diff < minDiff) {
-					minDiff = diff
-					closest = idx
-				}
-			})
-			return closest
-		}, [contextSize])
-
-		const handleContextSizeChange = useCallback(
-			async (newIndex: number) => {
-				const newSize = CONTEXT_SIZES[newIndex]
-				setContextSize(newSize)
+		const handleContextSizeSelect = useCallback(
+			async (newSize: number) => {
+				const clamped = Math.max(CONTEXT_SIZES[0], Math.min(CONTEXT_SIZES[CONTEXT_SIZES.length - 1], Math.round(newSize)))
+				setContextSize(clamped)
 
 				if (selectedProvider === "ollama") {
 					try {
@@ -1435,7 +1429,7 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 							WriteProviderConfigRequest.create({
 								providerId: "ollama",
 								patch: WriteProviderConfigPatch.create({
-									contextWindow: newSize,
+									contextWindow: clamped,
 								}),
 							}),
 						)
@@ -1452,7 +1446,7 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 								mode,
 								modelId: selectedModelId,
 								overrides: toProtobufModelOverrides({
-									contextWindow: newSize,
+									contextWindow: clamped,
 									temperature,
 								}),
 							}),
@@ -1463,6 +1457,27 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 				}
 			},
 			[selectedProvider, selectedModelId, mode, temperature],
+		)
+
+		const sliderIndex = useMemo(() => {
+			let closest = 0
+			let minDiff = Infinity
+			CONTEXT_SIZES.forEach((size, idx) => {
+				const diff = Math.abs(size - (contextSize || 32768))
+				if (diff < minDiff) {
+					minDiff = diff
+					closest = idx
+				}
+			})
+			return closest
+		}, [contextSize])
+
+		const handleContextSizeChange = useCallback(
+			async (newIndex: number) => {
+				const newSize = CONTEXT_SIZES[newIndex]
+				await handleContextSizeSelect(newSize)
+			},
+			[handleContextSizeSelect],
 		)
 
 		// Get model display name
@@ -1985,30 +2000,30 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 								</span>
 							</div>
 							<button
-								type="button"
-								onClick={handleUnloadOllamaModel}
-								disabled={isUnloadingOllama || (!ollamaStatus.isRunning && !ollamaStatus.modelName)}
-								className="flex items-center justify-center p-1 rounded bg-[var(--vscode-button-secondaryBackground)] hover:bg-[var(--vscode-button-secondaryHoverBackground)] text-[var(--vscode-button-secondaryForeground)] cursor-pointer transition-colors border-0 select-none disabled:opacity-40 disabled:cursor-not-allowed"
 								aria-label="Free VRAM"
+								className="flex items-center justify-center p-1 rounded bg-[var(--vscode-button-secondaryBackground)] hover:bg-[var(--vscode-button-secondaryHoverBackground)] text-[var(--vscode-button-secondaryForeground)] cursor-pointer transition-colors border-0 select-none disabled:opacity-40 disabled:cursor-not-allowed"
+								data-testid="unload-ollama-model-button"
+								disabled={isUnloadingOllama || (!ollamaStatus.isRunning && !ollamaStatus.modelName)}
+								onClick={handleUnloadOllamaModel}
 								title={
 									ollamaStatus.isRunning
 										? `Unload ${ollamaStatus.modelName || selectedModelId} and free VRAM (${(Number(ollamaStatus.sizeVram) / (1024 * 1024 * 1024)).toFixed(2)} GB)`
 										: "No model currently loaded in VRAM"
 								}
-								data-testid="unload-ollama-model-button">
-								<PowerOffIcon size={11} className={isUnloadingOllama ? "animate-spin" : ""} />
+								type="button">
+								<PowerOffIcon className={isUnloadingOllama ? "animate-spin" : ""} size={11} />
 							</button>
 						</div>
 					)}
 					<div
 						className="flex items-center shrink-0 text-[var(--vscode-descriptionForeground)] select-none cursor-help"
-						title={`Context: ${CONTEXT_SIZES[sliderIndex].toLocaleString()} tokens`}>
+						title={`Context: ${contextSize.toLocaleString()} tokens`}>
 						<DatabaseIcon size={12} />
 					</div>
 					<div className="flex-1 min-w-0 flex items-center gap-2">
 						<ContextSlider
 							aria-label="Context"
-							aria-valuetext={`${CONTEXT_SIZES[sliderIndex].toLocaleString()} tokens (${formatContextSizeLabel(CONTEXT_SIZES[sliderIndex])})`}
+							aria-valuetext={`${contextSize.toLocaleString()} tokens (${formatContextSizeLabel(contextSize)})`}
 							className="flex-1 cursor-pointer"
 							data-testid="context-size-slider"
 							max={CONTEXT_SIZES.length - 1}
@@ -2020,58 +2035,58 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 						<span
 							className="text-[11px] font-mono text-[var(--vscode-foreground)] shrink-0 min-w-[36px] text-right select-none"
 							data-testid="context-size-value"
-							title={`${CONTEXT_SIZES[sliderIndex].toLocaleString()} tokens`}>
-							{formatContextSizeLabel(CONTEXT_SIZES[sliderIndex])}
+							title={`Context: ${contextSize.toLocaleString()} tokens`}>
+							{formatContextSizeLabel(contextSize)}
 						</span>
 						{selectedProvider === "ollama" && (
 							<div
 								className="flex items-center rounded border border-[var(--vscode-input-border)] bg-[var(--vscode-input-background)] text-[10px] font-mono shrink-0 select-none overflow-hidden h-5"
-								title="Temperature: 0.0 - 1.0 (0.1 step, default 0.8)">
+								title="Temperature: 0.0 - 2.0 (0.1 step, default 0.8)">
 								<div
 									className="pl-1.5 pr-0.5 text-[var(--vscode-descriptionForeground)] flex items-center cursor-help"
 									title={`Temperature: ${temperature.toFixed(1)}`}>
 									<ThermometerIcon size={11} />
 								</div>
 								<button
-									type="button"
-									onClick={() => handleTemperatureStep(-0.1)}
-									disabled={temperature <= 0.05}
-									className="px-1 h-full flex items-center justify-center text-[var(--vscode-foreground)] hover:bg-[var(--vscode-toolbar-hoverBackground)] cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed border-0 bg-transparent transition-colors"
 									aria-label="Decrease temperature"
+									className="px-1 h-full flex items-center justify-center text-[var(--vscode-foreground)] hover:bg-[var(--vscode-toolbar-hoverBackground)] cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed border-0 bg-transparent transition-colors"
+									data-testid="temperature-decrement"
+									disabled={temperature <= 0.05}
+									onClick={() => handleTemperatureStep(-0.1)}
 									title="Decrease temperature (-0.1)"
-									data-testid="temperature-decrement">
+									type="button">
 									<MinusIcon size={10} />
 								</button>
 								<input
-									type="number"
+									className="w-[26px] h-full bg-transparent text-center text-[10px] font-mono text-[var(--vscode-foreground)] focus:outline-none border-0 p-0 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+									data-testid="temperature-input"
+									max={2}
 									min={0}
-									max={1}
-									step={0.1}
-									value={temperature.toFixed(1)}
 									onChange={(e) => {
 										const val = parseFloat(e.target.value)
-										if (!isNaN(val)) {
+										if (!Number.isNaN(val)) {
 											void handleTemperatureSelect(val)
 										}
 									}}
-									className="w-[26px] h-full bg-transparent text-center text-[10px] font-mono text-[var(--vscode-foreground)] focus:outline-none border-0 p-0 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-									data-testid="temperature-input"
-									title="Temperature: 0.0 to 1.0 (default 0.8)"
+									step={0.1}
+									title="Temperature: 0.0 to 2.0 (default 0.8)"
+									type="number"
+									value={temperature.toFixed(1)}
 								/>
 								<button
-									type="button"
-									onClick={() => handleTemperatureStep(0.1)}
-									disabled={temperature >= 0.95}
-									className="px-1 h-full flex items-center justify-center text-[var(--vscode-foreground)] hover:bg-[var(--vscode-toolbar-hoverBackground)] cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed border-0 bg-transparent transition-colors"
 									aria-label="Increase temperature"
+									className="px-1 h-full flex items-center justify-center text-[var(--vscode-foreground)] hover:bg-[var(--vscode-toolbar-hoverBackground)] cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed border-0 bg-transparent transition-colors"
+									data-testid="temperature-increment"
+									disabled={temperature >= 1.95}
+									onClick={() => handleTemperatureStep(0.1)}
 									title="Increase temperature (+0.1)"
-									data-testid="temperature-increment">
+									type="button">
 									<PlusIcon size={10} />
 								</button>
 							</div>
 						)}
 						<span
-							className="flex items-center gap-1 shrink-0 px-1.5 py-0.5 rounded bg-[var(--vscode-badge-background)] text-[var(--vscode-badge-foreground)] text-[10px] font-mono select-none"
+							className="flex items-center gap-1 shrink-0 px-1.5 py-0.5 rounded bg-[var(--vscode-badge-background)] text-[var(--vscode-badge-foreground)] text-[10px] font-mono select-none ml-auto"
 							data-testid="inference-speed"
 							title={
 								latestInferenceSpeed
@@ -2135,7 +2150,6 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 										<ModelSelectDropdown
 											aria-label="Select Ollama Model"
 											data-testid="ollama-model-select"
-											onFocus={requestOllamaModels}
 											onChange={(e) => {
 												if (e.target.value === "__settings__") {
 													handleModelButtonClick()
@@ -2143,6 +2157,7 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 													handleOllamaModelSelect(e.target.value)
 												}
 											}}
+											onFocus={requestOllamaModels}
 											title={`Ollama model for ${mode} mode: ${selectedModelId || "None"}`}
 											value={selectedModelId || ""}>
 											{ollamaModels.length === 0 && !selectedModelId && (
@@ -2174,7 +2189,10 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 													disabled={isRefreshingOllama}
 													onClick={requestOllamaModels}>
 													<ButtonContainer>
-														<RefreshCwIcon className={isRefreshingOllama ? "animate-spin" : ""} size={11} />
+														<RefreshCwIcon
+															className={isRefreshingOllama ? "animate-spin" : ""}
+															size={11}
+														/>
 													</ButtonContainer>
 												</VSCodeButton>
 											</TooltipTrigger>
@@ -2189,7 +2207,9 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 											tabIndex={0}
 											title="Open API Settings">
 											<ModelButtonContent className="text-xs flex items-center gap-1">
-												{!didHydrateState && <LoaderCircleIcon className="w-3 h-3 animate-spin inline shrink-0" />}
+												{!didHydrateState && (
+													<LoaderCircleIcon className="w-3 h-3 animate-spin inline shrink-0" />
+												)}
 												{modelDisplayName}
 											</ModelButtonContent>
 										</ModelDisplayButton>

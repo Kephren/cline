@@ -24,3 +24,13 @@ vi.stubGlobal("acquireVsCodeApi", () => ({
 	getState: vi.fn(),
 	setState: vi.fn(),
 }))
+
+// Mock ResizeObserver for jsdom
+vi.stubGlobal(
+	"ResizeObserver",
+	class ResizeObserver {
+		observe() {}
+		unobserve() {}
+		disconnect() {}
+	},
+)
