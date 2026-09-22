@@ -19,6 +19,8 @@ service ModelsService {
   rpc unloadOllamaModel(UnloadOllamaModelRequest) returns (Empty);
   // Reloads running model in Ollama with new options (num_ctx)
   rpc reloadOllamaModel(ReloadOllamaModelRequest) returns (Empty);
+  // Fetches detailed model inspection from Ollama (/api/show)
+  rpc getOllamaModelDetails(OllamaModelDetailsRequest) returns (OllamaModelDetailsResponse);
   // Fetches available models from LM Studio
   rpc getLmStudioModels(StringRequest) returns (StringArray);
   // Fetches available models from VS Code LM API
@@ -94,6 +96,25 @@ message OllamaModelStatusResponse {
   int64 size_vram = 4;
   int32 gpu_percent = 5;
   int32 cpu_percent = 6;
+}
+
+// Request to inspect detailed Ollama model metadata (/api/show)
+message OllamaModelDetailsRequest {
+  optional string base_url = 1;
+  string model_name = 2;
+}
+
+// Detailed metadata of an Ollama model from /api/show
+message OllamaModelDetailsResponse {
+  optional string format = 1;
+  optional string family = 2;
+  repeated string families = 3;
+  optional string parameter_size = 4;
+  optional string quantization_level = 5;
+  optional int64 context_length = 6;
+  optional bool supports_tools = 7;
+  optional bool supports_vision = 8;
+  optional string parent_model = 9;
 }
 
 // List of VS Code LM models

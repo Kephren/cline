@@ -434,9 +434,38 @@ const ollamaNativeOptionsRule: ProviderOptionRule = {
 			contextWindow > 0
 				? Math.floor(contextWindow)
 				: OLLAMA_DEFAULT_CONTEXT_WINDOW;
-		const bucketOptions = {
-			options: { num_ctx: numCtx },
+		const nativeOptions: Record<string, unknown> = { num_ctx: numCtx };
+
+		const modelAny = input.context.model as unknown as Record<string, unknown>;
+		const configAny = input.context.config as unknown as Record<string, unknown>;
+		const configOptions = (configAny.options ?? {}) as Record<string, unknown>;
+		const requestMeta = (input.request.metadata ?? {}) as Record<string, unknown>;
+
+		const seed = requestMeta.seed ?? modelAny.seed ?? configOptions.seed;
+		if (typeof seed === "number" && Number.isFinite(seed) && seed >= 0) {
+			nativeOptions.seed = Math.floor(seed);
+		}
+
+		const minP = requestMeta.min_p ?? modelAny.minP ?? modelAny.min_p ?? configOptions.min_p;
+		if (typeof minP === "number" && Number.isFinite(minP) && minP > 0) {
+			nativeOptions.min_p = minP;
+		}
+
+		const repeatPenalty =
+			requestMeta.repeat_penalty ??
+			modelAny.repeatPenalty ??
+			modelAny.repeat_penalty ??
+			configOptions.repeat_penalty;
+		if (typeof repeatPenalty === "number" && Number.isFinite(repeatPenalty) && repeatPenalty > 0) {
+			nativeOptions.repeat_penalty = repeatPenalty;
+		}
+
+		const bucketOptions: Record<string, unknown> = {
+			options: nativeOptions,
 		};
+		if (typeof input.request.reasoning?.enabled === "boolean") {
+			bucketOptions.think = input.request.reasoning.enabled;
+		}
 		return {
 			ollama: bucketOptions,
 		};
