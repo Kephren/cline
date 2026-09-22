@@ -1,7 +1,7 @@
 import { openAiModelInfoSafeDefaults } from "@shared/api"
 import { StringRequest } from "@shared/proto/cline/common"
 import { Mode } from "@shared/storage/types"
-import { VSCodeLink } from "@vscode/webview-ui-toolkit/react"
+import { VSCodeCheckbox, VSCodeLink } from "@vscode/webview-ui-toolkit/react"
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { useExtensionState } from "@/context/ExtensionStateContext"
 import { useProviderConfig } from "@/hooks/useProviderConfig"
@@ -190,6 +190,108 @@ export const OllamaProvider = ({ showModelOptions, isPopup, currentMode }: Ollam
 
 			{showModelOptions && (
 				<>
+					{/* Temperature */}
+					<DebouncedTextField
+						initialValue={
+							apiConfiguration?.ollamaTemperature !== undefined
+								? String(apiConfiguration.ollamaTemperature)
+								: "0.8"
+						}
+						onChange={(value) => {
+							const numValue = Number.parseFloat(value)
+							if (!Number.isNaN(numValue) && numValue >= 0 && numValue <= 2) {
+								handleFieldChange("ollamaTemperature", Math.round(numValue * 10) / 10)
+							}
+						}}
+						placeholder="Default: 0.8"
+						style={{ width: "100%" }}>
+						<span className="font-semibold">Temperature (0.0 - 2.0)</span>
+					</DebouncedTextField>
+					<p className="text-xs mt-0 text-description">
+						Controls output randomness. 0.0 is deterministic and focused; higher values increase variety.
+					</p>
+
+					{/* Min-P Sampling */}
+					<DebouncedTextField
+						initialValue={
+							apiConfiguration?.ollamaMinP !== undefined ? String(apiConfiguration.ollamaMinP) : "0.00"
+						}
+						onChange={(value) => {
+							const numValue = Number.parseFloat(value)
+							if (!Number.isNaN(numValue) && numValue >= 0 && numValue <= 1) {
+								handleFieldChange("ollamaMinP", Math.round(numValue * 100) / 100)
+							}
+						}}
+						placeholder="Default: 0.00"
+						style={{ width: "100%" }}>
+						<span className="font-semibold">Min-P Sampling (0.00 - 1.00)</span>
+					</DebouncedTextField>
+					<p className="text-xs mt-0 text-description">
+						Filters tokens with probability relative to the most likely token (0.00 = disabled).
+					</p>
+
+					{/* Deterministic Seed */}
+					<div className="flex flex-col gap-1 mt-1">
+						<span className="font-semibold text-xs">Deterministic Seed</span>
+						<div className="flex items-center gap-2">
+							<VSCodeCheckbox
+								checked={apiConfiguration?.ollamaSeedEnabled ?? false}
+								onChange={(e: any) => {
+									const checked = (e.target as HTMLInputElement).checked
+									handleFieldChange("ollamaSeedEnabled", checked)
+								}}>
+								Enable fixed seed
+							</VSCodeCheckbox>
+							{apiConfiguration?.ollamaSeedEnabled && (
+								<DebouncedTextField
+									initialValue={
+										apiConfiguration?.ollamaSeedValue !== undefined
+											? String(apiConfiguration.ollamaSeedValue)
+											: "42"
+									}
+									onChange={(value) => {
+										const numValue = Number.parseInt(value, 10)
+										if (!Number.isNaN(numValue) && numValue >= 0) {
+											handleFieldChange("ollamaSeedValue", numValue)
+										}
+									}}
+									placeholder="42"
+									style={{ width: "90px" }}
+								/>
+							)}
+						</div>
+						<p className="text-xs mt-0 text-description">
+							Fixes the random seed for reproducible completions across sessions.
+						</p>
+					</div>
+
+					{/* Reasoning / Thinking Mode */}
+					<div className="flex flex-col gap-1 mt-1">
+						<span className="font-semibold text-xs">Reasoning / Thinking Mode</span>
+						<VSCodeCheckbox
+							checked={apiConfiguration?.ollamaReasoning ?? true}
+							onChange={(e: any) => {
+								const checked = (e.target as HTMLInputElement).checked
+								handleFieldChange("ollamaReasoning", checked)
+							}}>
+							Enable thinking output for reasoning models
+						</VSCodeCheckbox>
+						<p className="text-xs mt-0 text-description">
+							Allows models with native reasoning capabilities to output thinking thoughts.
+						</p>
+					</div>
+
+					{/* Tuned Status Indicator */}
+					{apiConfiguration?.ollamaIsTuned && (
+						<div className="flex items-center gap-2 p-2 mt-1 rounded bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs font-mono">
+							<span className="font-semibold">✓ Calibrated:</span>
+							<span>
+								{apiConfiguration.ollamaTunedModel ? `${apiConfiguration.ollamaTunedModel} ` : ""}
+								tuned to {apiConfiguration.ollamaTunedContextSize ? `${Number(apiConfiguration.ollamaTunedContextSize).toLocaleString()} tokens` : "100% GPU"}
+							</span>
+						</div>
+					)}
+
 					<DebouncedTextField
 						initialValue={apiConfiguration?.requestTimeoutMs ? apiConfiguration.requestTimeoutMs.toString() : "300000"}
 						onChange={(value) => {

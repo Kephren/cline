@@ -665,7 +665,14 @@ export function resolveAzureProviderConfig(config: ApiConfiguration): Pick<Provi
 }
 
 type OllamaProviderConfig = {
-	modelInfo?: { id: string; name: string; contextWindow: number }
+	modelInfo?: {
+		id: string
+		name: string
+		contextWindow: number
+		temperature?: number
+		minP?: number
+		seed?: number
+	}
 	timeoutMs?: number
 }
 
@@ -699,9 +706,28 @@ export function resolveOllamaProviderConfig(
 	const legacyContextWindow = Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : undefined
 	const contextWindow = overrideContextWindow ?? settingsContextWindow ?? legacyContextWindow ?? OLLAMA_DEFAULT_CONTEXT_WINDOW
 	const timeoutMs = config.requestTimeoutMs
+
+	const overrideTemperature = positiveFiniteNumber(selection?.overrides?.temperature)
+	const temperature =
+		overrideTemperature ??
+		(typeof config.ollamaTemperature === "number" && config.ollamaTemperature >= 0 ? config.ollamaTemperature : undefined)
+	const minP = typeof config.ollamaMinP === "number" && config.ollamaMinP > 0 ? config.ollamaMinP : undefined
+	const seed = config.ollamaSeedEnabled && typeof config.ollamaSeedValue === "number" ? config.ollamaSeedValue : undefined
+
 	return {
 		...(typeof timeoutMs === "number" && timeoutMs > 0 ? { timeoutMs } : {}),
-		...(modelId ? { modelInfo: { id: modelId, name: modelId, contextWindow } } : {}),
+		...(modelId
+			? {
+					modelInfo: {
+						id: modelId,
+						name: modelId,
+						contextWindow,
+						...(temperature !== undefined ? { temperature } : {}),
+						...(minP !== undefined ? { minP } : {}),
+						...(seed !== undefined ? { seed } : {}),
+					},
+				}
+			: {}),
 	}
 }
 

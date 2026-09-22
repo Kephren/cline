@@ -20,4 +20,29 @@ describe("api configuration provider conversion", () => {
 			expect(result.planModeApiProvider).toBe(provider)
 		}
 	})
+
+	it("round-trips Ollama sampling, reasoning, and tuned settings", () => {
+		const config = {
+			ollamaTemperature: 0.7,
+			ollamaMinP: 0.15,
+			ollamaSeedEnabled: true,
+			ollamaSeedValue: 12345,
+			ollamaReasoning: false,
+			ollamaIsTuned: true,
+			ollamaTunedContextSize: 16384,
+			ollamaTunedModel: "qwen2.5:latest",
+		}
+
+		const proto = convertApiConfigurationToProto(config)
+		const result = convertProtoToApiConfiguration(proto)
+
+		expect(result.ollamaTemperature).toBe(0.7)
+		expect(result.ollamaMinP).toBe(0.15)
+		expect(result.ollamaSeedEnabled).toBe(true)
+		expect(result.ollamaSeedValue).toBe(12345)
+		expect(result.ollamaReasoning).toBe(false)
+		expect(result.ollamaIsTuned).toBe(true)
+		expect(result.ollamaTunedContextSize).toBe(16384)
+		expect(result.ollamaTunedModel).toBe("qwen2.5:latest")
+	})
 })

@@ -19,17 +19,24 @@ export async function writeProviderConfig(
 	const updated = store.write(providerId, toProviderConfigPatch(request.patch))
 
 	if (hasProviderCatalogStateController(controller)) {
-		if (providerId.toString() === "ollama" && request.patch?.contextWindow !== undefined) {
-			const ctx = request.patch.contextWindow
-			controller.stateManager.setGlobalStateBatch({
-				ollamaApiOptionsCtxNum: ctx > 0 ? String(ctx) : undefined,
-			})
-			await controller.stateManager.flushPendingState?.()
-			const nextApiConfiguration = controller.stateManager.getApiConfiguration?.()
-			if (nextApiConfiguration) {
-				controller.handleApiConfigurationChanged?.(previousApiConfiguration ?? {}, nextApiConfiguration)
+		if (providerId.toString() === "ollama") {
+			const updates: Record<string, any> = {}
+			if (request.patch?.contextWindow !== undefined) {
+				const ctx = request.patch.contextWindow
+				updates.ollamaApiOptionsCtxNum = ctx > 0 ? String(ctx) : undefined
 			}
-			await controller.postStateToWebview?.()
+			if (request.patch?.reasoning?.enabled !== undefined) {
+				updates.ollamaReasoning = request.patch.reasoning.enabled
+			}
+			if (Object.keys(updates).length > 0) {
+				controller.stateManager.setGlobalStateBatch(updates)
+				await controller.stateManager.flushPendingState?.()
+				const nextApiConfiguration = controller.stateManager.getApiConfiguration?.()
+				if (nextApiConfiguration) {
+					controller.handleApiConfigurationChanged?.(previousApiConfiguration ?? {}, nextApiConfiguration)
+				}
+				await controller.postStateToWebview?.()
+			}
 		}
 	}
 

@@ -21,6 +21,8 @@ service ModelsService {
   rpc reloadOllamaModel(ReloadOllamaModelRequest) returns (Empty);
   // Fetches detailed model inspection from Ollama (/api/show)
   rpc getOllamaModelDetails(OllamaModelDetailsRequest) returns (OllamaModelDetailsResponse);
+  // Tests if a model context size fits on GPU in Ollama (/api/generate + /api/ps)
+  rpc probeOllamaContext(ProbeOllamaContextRequest) returns (ProbeOllamaContextResponse);
   // Fetches available models from LM Studio
   rpc getLmStudioModels(StringRequest) returns (StringArray);
   // Fetches available models from VS Code LM API
@@ -115,6 +117,24 @@ message OllamaModelDetailsResponse {
   optional bool supports_tools = 7;
   optional bool supports_vision = 8;
   optional string parent_model = 9;
+}
+
+// Request to test/probe if a context size fits in GPU VRAM for an Ollama model
+message ProbeOllamaContextRequest {
+  optional string base_url = 1;
+  string model_name = 2;
+  int32 context_window = 3;
+}
+
+// Response from testing/probing an Ollama model context size
+message ProbeOllamaContextResponse {
+  bool success = 1;
+  bool fits_on_gpu = 2;
+  int32 gpu_percent = 3;
+  int32 cpu_percent = 4;
+  int64 size_vram = 5;
+  int64 size = 6;
+  optional string error = 7;
 }
 
 // List of VS Code LM models
@@ -493,6 +513,14 @@ message ModelsApiOptions {
   optional string aihubmix_base_url = 42;
   optional string aihubmix_app_code = 43;
   optional bool azure_identity = 44;
+  optional double ollama_temperature = 45;
+  optional double ollama_min_p = 46;
+  optional bool ollama_seed_enabled = 47;
+  optional int64 ollama_seed_value = 48;
+  optional bool ollama_reasoning = 49;
+  optional bool ollama_is_tuned = 50;
+  optional int64 ollama_tuned_context_size = 51;
+  optional string ollama_tuned_model = 52;
 
   // Plan mode configurations
   optional string plan_mode_api_provider = 100;
@@ -806,6 +834,14 @@ message ModelsApiConfiguration {
   optional string nous_research_api_key = 85;
   optional bool azure_identity = 86;
   optional string wandb_api_key = 87;
+  optional double ollama_temperature = 88;
+  optional double ollama_min_p = 89;
+  optional bool ollama_seed_enabled = 90;
+  optional int64 ollama_seed_value = 91;
+  optional bool ollama_reasoning = 92;
+  optional bool ollama_is_tuned = 93;
+  optional int64 ollama_tuned_context_size = 94;
+  optional string ollama_tuned_model = 95;
 
   // Plan mode configurations
   optional string plan_mode_api_provider = 100;

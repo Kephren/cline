@@ -5,6 +5,7 @@ import {
 	CommitModelSelectionRequest,
 	OllamaModelDetailsRequest,
 	type OllamaModelDetailsResponse,
+	ProbeOllamaContextRequest,
 	UnloadOllamaModelRequest,
 	WriteProviderConfigPatch,
 	WriteProviderConfigRequest,
@@ -17,17 +18,19 @@ import { VSCodeButton } from "@vscode/webview-ui-toolkit/react"
 import {
 	AtSignIcon,
 	BrainIcon,
+	CheckIcon,
 	CpuIcon,
 	DatabaseIcon,
 	DicesIcon,
 	EyeIcon,
+	InfoIcon,
 	LoaderCircleIcon,
 	MinusIcon,
 	PlusIcon,
 	PowerOffIcon,
 	RefreshCwIcon,
 	SlidersHorizontalIcon,
-	TargetIcon,
+	SparklesIcon,
 	ThermometerIcon,
 	TriangleAlertIcon,
 	WrenchIcon,
@@ -42,11 +45,13 @@ import { CHAT_CONSTANTS } from "@/components/chat/chat-view/constants"
 import SlashCommandMenu from "@/components/chat/SlashCommandMenu"
 import Thumbnails from "@/components/common/Thumbnails"
 import { getModeSpecificFields } from "@/components/settings/utils/providerUtils"
+import { useApiConfigurationHandlers } from "@/components/settings/utils/useApiConfigurationHandlers"
 import { Slider as ContextSlider } from "@/components/ui/slider"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { useExtensionState } from "@/context/ExtensionStateContext"
 import { usePlatform } from "@/context/PlatformContext"
 import { useNormalizedApiConfiguration } from "@/hooks/useNormalizedApiConfiguration"
+import { useProviderConfig } from "@/hooks/useProviderConfig"
 import { cn } from "@/lib/utils"
 import { FileServiceClient, ModelsServiceClient, StateServiceClient } from "@/services/grpc-client"
 import {
@@ -60,6 +65,7 @@ import {
 	shouldShowContextMenu,
 } from "@/utils/context-mentions"
 import { useMetaKeyDetection, useShortcut } from "@/utils/hooks"
+import { type AutotuneProbeResult, type ProbeContextFunction, runOllamaAutotune } from "@/utils/ollamaAutotuner"
 import { isSafari } from "@/utils/platformUtils"
 import {
 	getMatchingSlashCommands,
@@ -124,13 +130,13 @@ interface GitCommit {
 const PLAN_MODE_COLOR = "var(--vscode-activityWarningBadge-background)"
 const ACT_MODE_COLOR = "var(--vscode-focusBorder)"
 
-const CONTEXT_SIZES = [
-	1024, 1280, 1536, 1792, 2048, 2560, 3072, 3584, 4096, 5120, 6144, 7168, 8192, 10240, 12288, 14336, 16384, 20480, 24576, 28672,
-	32768, 40960, 49152, 57344, 65536, 81920, 98304, 114688, 131072, 163840, 196608, 229376, 262144, 327680, 393216, 458752,
-	524288, 655360, 786432, 917504, 1048576,
+export const CONTEXT_SIZES = [
+	512, 768, 1024, 1280, 1536, 1792, 2048, 2560, 3072, 3584, 4096, 5120, 6144, 7168, 8192, 10240, 12288, 14336, 16384, 20480,
+	24576, 28672, 32768, 40960, 49152, 57344, 65536, 81920, 98304, 114688, 131072, 163840, 196608, 229376, 262144, 327680, 393216,
+	458752, 524288, 655360, 786432, 917504, 1048576,
 ] as const
 
-function formatContextSizeLabel(tokens: number): string {
+export function formatContextSizeLabel(tokens: number): string {
 	if (tokens >= 1024) {
 		const k = tokens / 1024
 		if (k % 1 === 0) {
@@ -139,6 +145,23 @@ function formatContextSizeLabel(tokens: number): string {
 		return `${Number(k.toFixed(2))}K`
 	}
 	return `${tokens}`
+}
+
+export function findClosestContextSizeIndex(rawSize: number): number {
+	let closest = 0
+	let minDiff = Infinity
+	CONTEXT_SIZES.forEach((size, idx) => {
+		const diff = Math.abs(size - rawSize)
+		if (diff < minDiff) {
+			minDiff = diff
+			closest = idx
+		}
+	})
+	return closest
+}
+
+export function findNearestContextSize(rawSize: number): number {
+	return CONTEXT_SIZES[findClosestContextSizeIndex(rawSize)]
 }
 
 export interface InferenceTelemetry {
@@ -428,6 +451,7 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 		const [searchLoading, setSearchLoading] = useState(false)
 		const [, metaKeyChar] = useMetaKeyDetection(platform)
 		const { selectedProvider, selectedModelId, selectedModelInfo } = useNormalizedApiConfiguration(mode)
+		const { config: ollamaConfig } = useProviderConfig("ollama")
 		// Images are attached regardless; when the selected model has no image input the thumbnails get a warning
 		// badge and a notice offers to switch models. Unknown capability data fails open, like core does.
 		const modelSupportsImages = selectedModelInfo.supportsImages !== false
@@ -437,11 +461,26 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 			() => selectedProvider === "ollama" && isOllamaReasoningModel(selectedModelId, selectedModelInfo),
 			[selectedProvider, selectedModelId, selectedModelInfo],
 		)
-		const [thinkingEnabled, setThinkingEnabled] = useState(true)
+		const { handleFieldChange, handleFieldsChange } = useApiConfigurationHandlers()
+		const [thinkingEnabled, setThinkingEnabled] = useState<boolean>(() => {
+			if (typeof apiConfiguration?.ollamaReasoning === "boolean") {
+				return apiConfiguration.ollamaReasoning
+			}
+			return true
+		})
+
+		useEffect(() => {
+			if (typeof apiConfiguration?.ollamaReasoning === "boolean") {
+				setThinkingEnabled(apiConfiguration.ollamaReasoning)
+			}
+		}, [apiConfiguration?.ollamaReasoning])
 
 		const handleReasoningToggle = useCallback(async () => {
 			const next = !thinkingEnabled
 			setThinkingEnabled(next)
+			void handleFieldChange("ollamaReasoning", next).catch((err) => {
+				console.error("Failed to update Ollama reasoning in config:", err)
+			})
 			try {
 				await ModelsServiceClient.writeProviderConfig(
 					WriteProviderConfigRequest.create({
@@ -456,7 +495,7 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 			} catch (error) {
 				console.error("Failed to update Ollama reasoning setting:", error)
 			}
-		}, [thinkingEnabled])
+		}, [thinkingEnabled, handleFieldChange])
 
 		// Fetch git commits when Git is selected or when typing a hash
 		useEffect(() => {
@@ -1346,6 +1385,9 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 
 		// Sampling controls: deterministic seed & min-p
 		const [seedEnabled, setSeedEnabled] = useState<boolean>(() => {
+			if (typeof apiConfiguration?.ollamaSeedEnabled === "boolean") {
+				return apiConfiguration.ollamaSeedEnabled
+			}
 			try {
 				return localStorage.getItem("cline:ollama:seedEnabled") === "true"
 			} catch {
@@ -1353,6 +1395,9 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 			}
 		})
 		const [seedValue, setSeedValue] = useState<number>(() => {
+			if (typeof apiConfiguration?.ollamaSeedValue === "number" && Number.isFinite(apiConfiguration.ollamaSeedValue)) {
+				return apiConfiguration.ollamaSeedValue
+			}
 			try {
 				const s = localStorage.getItem("cline:ollama:seedValue")
 				return s ? Number.parseInt(s, 10) : 42
@@ -1361,6 +1406,9 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 			}
 		})
 		const [minP, setMinP] = useState<number>(() => {
+			if (typeof apiConfiguration?.ollamaMinP === "number" && Number.isFinite(apiConfiguration.ollamaMinP)) {
+				return Math.max(0, Math.min(1, apiConfiguration.ollamaMinP))
+			}
 			try {
 				const m = localStorage.getItem("cline:ollama:minP")
 				return m ? Number.parseFloat(m) : 0.0
@@ -1369,15 +1417,36 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 			}
 		})
 
+		useEffect(() => {
+			if (typeof apiConfiguration?.ollamaSeedEnabled === "boolean") {
+				setSeedEnabled(apiConfiguration.ollamaSeedEnabled)
+			}
+		}, [apiConfiguration?.ollamaSeedEnabled])
+
+		useEffect(() => {
+			if (typeof apiConfiguration?.ollamaSeedValue === "number" && Number.isFinite(apiConfiguration.ollamaSeedValue)) {
+				setSeedValue(apiConfiguration.ollamaSeedValue)
+			}
+		}, [apiConfiguration?.ollamaSeedValue])
+
+		useEffect(() => {
+			if (typeof apiConfiguration?.ollamaMinP === "number" && Number.isFinite(apiConfiguration.ollamaMinP)) {
+				setMinP(Math.max(0, Math.min(1, apiConfiguration.ollamaMinP)))
+			}
+		}, [apiConfiguration?.ollamaMinP])
+
 		const handleSeedToggle = useCallback(() => {
 			setSeedEnabled((prev) => {
 				const next = !prev
 				try {
 					localStorage.setItem("cline:ollama:seedEnabled", String(next))
 				} catch {}
+				void handleFieldChange("ollamaSeedEnabled", next).catch((err) => {
+					console.error("Failed to persist ollamaSeedEnabled:", err)
+				})
 				return next
 			})
-		}, [])
+		}, [handleFieldChange])
 
 		const handleMinPStep = useCallback((step: number) => {
 			setMinP((prev) => {
@@ -1385,9 +1454,12 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 				try {
 					localStorage.setItem("cline:ollama:minP", String(next))
 				} catch {}
+				void handleFieldChange("ollamaMinP", next).catch((err) => {
+					console.error("Failed to persist ollamaMinP:", err)
+				})
 				return next
 			})
-		}, [])
+		}, [handleFieldChange])
 
 		const handleMinPChange = useCallback((val: number) => {
 			const clamped = Math.max(0, Math.min(1, Math.round(val * 100) / 100))
@@ -1395,9 +1467,24 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 			try {
 				localStorage.setItem("cline:ollama:minP", String(clamped))
 			} catch {}
-		}, [])
+			void handleFieldChange("ollamaMinP", clamped).catch((err) => {
+				console.error("Failed to persist ollamaMinP:", err)
+			})
+		}, [handleFieldChange])
 
+		const isFirstModelLoadRef = useRef(true)
 		const lastAppliedModelRef = useRef<string | undefined>(selectedModelId)
+
+		const hasConfiguredContext =
+			(typeof ollamaConfig?.contextWindow === "number" && ollamaConfig.contextWindow > 0) ||
+			Boolean(
+				typeof apiConfiguration?.ollamaTunedContextSize === "number" &&
+					apiConfiguration.ollamaTunedContextSize > 0,
+			) ||
+			Boolean(
+				apiConfiguration?.ollamaApiOptionsCtxNum &&
+					Number.parseInt(apiConfiguration.ollamaApiOptionsCtxNum, 10) > 0,
+			)
 
 		useEffect(() => {
 			if (selectedProvider !== "ollama" || !selectedModelId) {
@@ -1416,8 +1503,10 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 					if (!cancelled && details) {
 						setOllamaModelDetails(details)
 						const nativeLen = Number(details.contextLength)
-						if (nativeLen > 0 && lastAppliedModelRef.current !== selectedModelId) {
-							lastAppliedModelRef.current = selectedModelId
+						const isModelSwitch = !isFirstModelLoadRef.current && lastAppliedModelRef.current !== selectedModelId
+						isFirstModelLoadRef.current = false
+						lastAppliedModelRef.current = selectedModelId
+						if (nativeLen > 0 && isModelSwitch && !hasConfiguredContext) {
 							setContextSize(nativeLen)
 						}
 					}
@@ -1433,7 +1522,7 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 			return () => {
 				cancelled = true
 			}
-		}, [selectedProvider, selectedModelId, ollamaBaseUrl])
+		}, [selectedProvider, selectedModelId, ollamaBaseUrl, hasConfiguredContext])
 
 		const requestOllamaStatus = useCallback(async () => {
 			if (selectedProvider !== "ollama") return
@@ -1468,13 +1557,21 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 						modelName: ollamaStatus.modelName || selectedModelId || "",
 					}),
 				)
+				setTunedContextSize(null)
+				setAutotuneStatusType("idle")
+				setAutotuneButtonStatus(null)
+				void handleFieldsChange({
+					ollamaIsTuned: false,
+					ollamaTunedContextSize: undefined,
+					ollamaTunedModel: undefined,
+				}).catch((err) => console.error("Failed to clear tuned status on unload:", err))
 				await requestOllamaStatus()
 			} catch (error) {
 				console.error("Failed to unload Ollama model in ChatTextArea:", error)
 			} finally {
 				setIsUnloadingOllama(false)
 			}
-		}, [selectedProvider, ollamaBaseUrl, ollamaStatus.modelName, selectedModelId, requestOllamaStatus])
+		}, [selectedProvider, ollamaBaseUrl, ollamaStatus.modelName, selectedModelId, requestOllamaStatus, handleFieldsChange])
 
 		useEffect(() => {
 			if (selectedProvider === "ollama") {
@@ -1510,17 +1607,76 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 			}
 		}, [selectedProvider, requestOllamaModels])
 
+		const effectiveOllamaModel = useMemo(
+			() => selectedModelId || ollamaStatus.modelName || (ollamaModels && ollamaModels.length > 0 ? ollamaModels[0] : ""),
+			[selectedModelId, ollamaStatus.modelName, ollamaModels],
+		)
+
+		// Persisted Model Context Window from config (source of truth is providers.json / ollamaConfig, mirrored to ollamaApiOptionsCtxNum)
+		const ollamaModelContextWindow = useMemo(() => {
+			if (selectedProvider !== "ollama") return undefined
+
+			// 1. If explicitly tuned for current model, autotuned context size is prioritized
+			if (
+				typeof apiConfiguration?.ollamaTunedContextSize === "number" &&
+				apiConfiguration.ollamaTunedContextSize > 0 &&
+				(!apiConfiguration.ollamaTunedModel ||
+					!effectiveOllamaModel ||
+					apiConfiguration.ollamaTunedModel === effectiveOllamaModel)
+			) {
+				return apiConfiguration.ollamaTunedContextSize
+			}
+
+			// 2. Check providers.json (authoritative store for Model Context Window setting)
+			if (typeof ollamaConfig?.contextWindow === "number" && ollamaConfig.contextWindow > 0) {
+				return ollamaConfig.contextWindow
+			}
+
+			// 3. Check legacy / mirrored state key (ollamaApiOptionsCtxNum)
+			const ctxNum = Number.parseInt(apiConfiguration?.ollamaApiOptionsCtxNum || "", 10)
+			if (Number.isFinite(ctxNum) && ctxNum > 0) {
+				return ctxNum
+			}
+
+			// 4. Fallback to ollamaTunedContextSize even if model name wasn't specified
+			if (typeof apiConfiguration?.ollamaTunedContextSize === "number" && apiConfiguration.ollamaTunedContextSize > 0) {
+				return apiConfiguration.ollamaTunedContextSize
+			}
+
+			return undefined
+		}, [
+			selectedProvider,
+			apiConfiguration?.ollamaTunedContextSize,
+			apiConfiguration?.ollamaTunedModel,
+			effectiveOllamaModel,
+			ollamaConfig?.contextWindow,
+			apiConfiguration?.ollamaApiOptionsCtxNum,
+		])
+
 		// Context Size Slider state & sync
 		const contextWindowFromModel = selectedModelInfo?.contextWindow
-		const ollamaCtx = Number.parseInt(apiConfiguration?.ollamaApiOptionsCtxNum || "", 10)
-		const effectiveContextSize =
-			Number.isFinite(contextWindowFromModel) && (contextWindowFromModel ?? 0) > 0
-				? (contextWindowFromModel as number)
-				: Number.isFinite(ollamaCtx) && ollamaCtx > 0
-					? ollamaCtx
-					: 32768
+		const effectiveRawContextSize = useMemo(() => {
+			if (selectedProvider === "ollama") {
+				if (ollamaModelContextWindow && ollamaModelContextWindow > 0) {
+					return ollamaModelContextWindow
+				}
+			}
+			if (Number.isFinite(contextWindowFromModel) && (contextWindowFromModel ?? 0) > 0) {
+				return contextWindowFromModel as number
+			}
+			return 32768
+		}, [
+			selectedProvider,
+			ollamaModelContextWindow,
+			contextWindowFromModel,
+		])
 
-		const [contextSize, setContextSize] = useState<number>(effectiveContextSize)
+		const effectiveContextSize = useMemo(
+			() => findNearestContextSize(effectiveRawContextSize),
+			[effectiveRawContextSize],
+		)
+
+		const [contextSize, setContextSize] = useState<number>(() => findNearestContextSize(effectiveRawContextSize))
 
 		useEffect(() => {
 			if (effectiveContextSize && effectiveContextSize > 0) {
@@ -1530,20 +1686,34 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 
 		// Temperature state & sync
 		const modelTemp = selectedModelInfo?.temperature
-		const [temperature, setTemperature] = useState<number>(
-			typeof modelTemp === "number" && Number.isFinite(modelTemp) ? Math.max(0, Math.min(2, modelTemp)) : 0.8,
-		)
+		const configTemp = apiConfiguration?.ollamaTemperature
+		const [temperature, setTemperature] = useState<number>(() => {
+			if (typeof configTemp === "number" && Number.isFinite(configTemp)) {
+				return Math.max(0, Math.min(2, configTemp))
+			}
+			if (typeof modelTemp === "number" && Number.isFinite(modelTemp)) {
+				return Math.max(0, Math.min(2, modelTemp))
+			}
+			return 0.8
+		})
 
 		useEffect(() => {
-			if (typeof modelTemp === "number" && Number.isFinite(modelTemp)) {
+			if (typeof apiConfiguration?.ollamaTemperature === "number" && Number.isFinite(apiConfiguration.ollamaTemperature)) {
+				setTemperature(Math.max(0, Math.min(2, apiConfiguration.ollamaTemperature)))
+			} else if (typeof modelTemp === "number" && Number.isFinite(modelTemp)) {
 				setTemperature(Math.max(0, Math.min(2, modelTemp)))
 			}
-		}, [modelTemp])
+		}, [apiConfiguration?.ollamaTemperature, modelTemp])
 
 		const handleTemperatureSelect = useCallback(
 			async (newTemp: number) => {
 				const clamped = Math.max(0, Math.min(2, Math.round(newTemp * 10) / 10))
 				setTemperature(clamped)
+				if (selectedProvider === "ollama") {
+					void handleFieldChange("ollamaTemperature", clamped).catch((err) => {
+						console.error("Failed to persist ollamaTemperature:", err)
+					})
+				}
 				if (!selectedModelId) return
 				try {
 					await ModelsServiceClient.commitModelSelection(
@@ -1561,7 +1731,7 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 					console.error("Failed to commit temperature override:", error)
 				}
 			},
-			[selectedProvider, mode, selectedModelId, contextSize],
+			[selectedProvider, mode, selectedModelId, contextSize, handleFieldChange],
 		)
 
 		const handleTemperatureStep = useCallback(
@@ -1615,9 +1785,10 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 			[mode, contextSize, temperature, ollamaBaseUrl],
 		)
 
+
 		const handleContextSizeSelect = useCallback(
 			async (newSize: number) => {
-				const clamped = Math.max(CONTEXT_SIZES[0], Math.min(CONTEXT_SIZES[CONTEXT_SIZES.length - 1], Math.round(newSize)))
+				const clamped = findNearestContextSize(newSize)
 				setContextSize(clamped)
 
 				if (selectedProvider === "ollama") {
@@ -1635,13 +1806,14 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 					}
 				}
 
-				if (selectedModelId) {
+				const targetModelId = selectedModelId || effectiveOllamaModel
+				if (targetModelId) {
 					try {
 						await ModelsServiceClient.commitModelSelection(
 							CommitModelSelectionRequest.create({
 								providerId: selectedProvider,
 								mode,
-								modelId: selectedModelId,
+								modelId: targetModelId,
 								overrides: toProtobufModelOverrides({
 									contextWindow: clamped,
 									temperature,
@@ -1653,7 +1825,7 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 					}
 				}
 			},
-			[selectedProvider, selectedModelId, mode, temperature],
+			[selectedProvider, selectedModelId, effectiveOllamaModel, mode, temperature],
 		)
 
 		const idealContextSize = useMemo(() => {
@@ -1668,38 +1840,273 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 
 		const idealContextIndex = useMemo(() => {
 			if (!idealContextSize || idealContextSize <= 0) return -1
-			let closest = 0
-			let minDiff = Infinity
-			CONTEXT_SIZES.forEach((size, idx) => {
-				const diff = Math.abs(size - idealContextSize)
-				if (diff < minDiff) {
-					minDiff = diff
-					closest = idx
-				}
-			})
-			return closest
+			return findClosestContextSizeIndex(idealContextSize)
 		}, [idealContextSize])
 
 		const sliderIndex = useMemo(() => {
-			let closest = 0
-			let minDiff = Infinity
-			CONTEXT_SIZES.forEach((size, idx) => {
-				const diff = Math.abs(size - (contextSize || 32768))
-				if (diff < minDiff) {
-					minDiff = diff
-					closest = idx
-				}
-			})
-			return closest
+			return findClosestContextSizeIndex(contextSize || 32768)
 		}, [contextSize])
+
+		const isConfigTuned =
+			selectedProvider === "ollama" &&
+			Boolean(apiConfiguration?.ollamaIsTuned) &&
+			typeof apiConfiguration?.ollamaTunedContextSize === "number" &&
+			apiConfiguration.ollamaTunedContextSize > 0
+
+		const [isAutotuning, setIsAutotuning] = useState(false)
+		const [autotuneButtonStatus, setAutotuneButtonStatus] = useState<string | null>(() => (isConfigTuned ? "Tuned" : null))
+		const [autotuneStatusType, setAutotuneStatusType] = useState<"idle" | "running" | "success" | "error">(() =>
+			isConfigTuned ? "success" : "idle",
+		)
+		const [autotuneErrorTooltip, setAutotuneErrorTooltip] = useState<string | null>(null)
+		const [tunedContextSize, setTunedContextSize] = useState<number | null>(() =>
+			isConfigTuned && apiConfiguration?.ollamaTunedContextSize
+				? findNearestContextSize(apiConfiguration.ollamaTunedContextSize)
+				: null,
+		)
+		const autotuneAbortControllerRef = useRef<AbortController | null>(null)
+
+		const tunedContextIndex = useMemo(() => {
+			if (!tunedContextSize || tunedContextSize <= 0) return -1
+			return findClosestContextSizeIndex(tunedContextSize)
+		}, [tunedContextSize])
+
+		// Sync tuned state from config on hydration or external config updates
+		useEffect(() => {
+			if (isConfigTuned && apiConfiguration?.ollamaTunedContextSize) {
+				const snapped = findNearestContextSize(apiConfiguration.ollamaTunedContextSize)
+				setTunedContextSize(snapped)
+				setContextSize(snapped)
+				setAutotuneStatusType("success")
+				setAutotuneButtonStatus("Tuned")
+			}
+		}, [isConfigTuned, apiConfiguration?.ollamaTunedContextSize])
 
 		const handleContextSizeChange = useCallback(
 			async (newIndex: number) => {
 				const newSize = CONTEXT_SIZES[newIndex]
+				if (tunedContextSize !== null) {
+					if (newSize === tunedContextSize) {
+						setAutotuneStatusType("success")
+						setAutotuneButtonStatus("Tuned")
+						setAutotuneErrorTooltip(null)
+						if (selectedProvider === "ollama") {
+							void handleFieldsChange({
+								ollamaIsTuned: true,
+								ollamaTunedContextSize: tunedContextSize,
+								ollamaTunedModel: effectiveOllamaModel,
+							}).catch((err) => console.error("Failed to update tuned status on context snap:", err))
+						}
+					} else {
+						setAutotuneStatusType("idle")
+						setAutotuneButtonStatus(null)
+						setAutotuneErrorTooltip(null)
+						if (selectedProvider === "ollama") {
+							void handleFieldsChange({
+								ollamaIsTuned: false,
+								ollamaTunedContextSize: tunedContextSize,
+								ollamaTunedModel: effectiveOllamaModel,
+							}).catch((err) => console.error("Failed to update tuned status on context change:", err))
+						}
+					}
+				} else if (autotuneStatusType === "error") {
+					setAutotuneStatusType("idle")
+					setAutotuneButtonStatus(null)
+					setAutotuneErrorTooltip(null)
+				}
 				await handleContextSizeSelect(newSize)
 			},
-			[handleContextSizeSelect],
+			[handleContextSizeSelect, tunedContextSize, autotuneStatusType, selectedProvider, handleFieldsChange, effectiveOllamaModel],
 		)
+
+		useEffect(() => {
+			if (
+				apiConfiguration?.ollamaTunedContextSize &&
+				apiConfiguration.ollamaTunedModel &&
+				effectiveOllamaModel &&
+				apiConfiguration.ollamaTunedModel === effectiveOllamaModel
+			) {
+				const snapped = findNearestContextSize(apiConfiguration.ollamaTunedContextSize)
+				setTunedContextSize(snapped)
+				if (contextSize === snapped || apiConfiguration.ollamaIsTuned) {
+					setAutotuneStatusType("success")
+					setAutotuneButtonStatus("Tuned")
+				} else {
+					setAutotuneStatusType("idle")
+					setAutotuneButtonStatus(null)
+				}
+			} else if (
+				apiConfiguration?.ollamaTunedModel &&
+				effectiveOllamaModel &&
+				apiConfiguration.ollamaTunedModel !== effectiveOllamaModel
+			) {
+				setTunedContextSize(null)
+				setAutotuneStatusType("idle")
+				setAutotuneButtonStatus(null)
+				setAutotuneErrorTooltip(null)
+			}
+		}, [
+			effectiveOllamaModel,
+			selectedProvider,
+			contextSize,
+			apiConfiguration?.ollamaIsTuned,
+			apiConfiguration?.ollamaTunedModel,
+			apiConfiguration?.ollamaTunedContextSize,
+		])
+
+		const handleAutotuneContext = useCallback(async () => {
+			if (selectedProvider !== "ollama" || !effectiveOllamaModel) return
+
+			if (isAutotuning) {
+				autotuneAbortControllerRef.current?.abort()
+				setIsAutotuning(false)
+				setAutotuneStatusType("idle")
+				setAutotuneButtonStatus(null)
+				return
+			}
+
+			const abortController = new AbortController()
+			autotuneAbortControllerRef.current = abortController
+			setIsAutotuning(true)
+			setAutotuneStatusType("running")
+			setAutotuneButtonStatus("Starting...")
+			setAutotuneErrorTooltip(null)
+
+			try {
+				let optimalVram = 0
+				let optimalSize = 0
+
+				const probeFn: ProbeContextFunction = async (testCtx: number): Promise<AutotuneProbeResult> => {
+					const res = await ModelsServiceClient.probeOllamaContext(
+						ProbeOllamaContextRequest.create({
+							baseUrl: ollamaBaseUrl || "http://localhost:11434",
+							modelName: effectiveOllamaModel,
+							contextWindow: testCtx,
+						}),
+					)
+					if (res.success && res.fitsOnGpu && res.gpuPercent >= 100) {
+						optimalVram = Number(res.sizeVram)
+						optimalSize = Number(res.size)
+					}
+					return {
+						success: res.success,
+						fitsOnGpu: res.fitsOnGpu,
+						gpuPercent: res.gpuPercent,
+						sizeVram: Number(res.sizeVram),
+						size: Number(res.size),
+						error: res.error,
+					}
+				}
+
+				// The goal is to set the maximum amount of context with 100% GPU usage, up to the model's ideal
+				const targetMaxThreshold =
+					idealContextSize > 0 ? idealContextSize : contextSize > 0 ? contextSize : 32768
+
+				const result = await runOllamaAutotune({
+					initialContextSize: targetMaxThreshold,
+					maxContextSize: targetMaxThreshold,
+					probeFn,
+					initialAdjustment: 4028,
+					minContextSize: 512,
+					minStepSize: 512,
+					onBeforeProbe: (testCtx) => {
+						setAutotuneButtonStatus(`Testing ${formatContextSizeLabel(testCtx)}...`)
+					},
+					onProgress: (p) => {
+						setAutotuneButtonStatus(`${formatContextSizeLabel(p.testingContext)}: ${p.gpuPercent}% GPU`)
+					},
+					signal: abortController.signal,
+				})
+
+				if (!result.achievedAllGpu) {
+					setAutotuneStatusType("error")
+					setAutotuneButtonStatus("Failed")
+					setTunedContextSize(null)
+					setAutotuneErrorTooltip(
+						`Model weights exceed available GPU VRAM even at minimum context (512 tokens).\n\n` +
+							`This model requires more VRAM than is currently free on your GPU and cannot run 100% on GPU without offloading layers to CPU RAM.\n` +
+							`Consider using a smaller model or higher quantization (e.g. Q4_K_M).`,
+					)
+					return
+				}
+
+				const autotunedSize = findNearestContextSize(result.optimalContextSize)
+				if (autotunedSize > 0) {
+					await handleContextSizeSelect(autotunedSize)
+				}
+
+				// Update Ollama GPU/CPU label to indicate 100% of GPU is utilized
+				setOllamaStatus((prev) => ({
+					...prev,
+					isRunning: true,
+					modelName: effectiveOllamaModel,
+					gpuPercent: 100,
+					cpuPercent: 0,
+					sizeVram: optimalVram || prev.sizeVram || 0,
+					size: optimalSize || prev.size || 0,
+				}))
+
+				setTunedContextSize(autotunedSize)
+				setAutotuneStatusType("success")
+				setAutotuneButtonStatus("Tuned")
+				void handleFieldsChange({
+					ollamaIsTuned: true,
+					ollamaTunedContextSize: autotunedSize,
+					ollamaTunedModel: effectiveOllamaModel,
+				}).catch((err) => console.error("Failed to persist autotune status:", err))
+				// Stays tuned and green permanently
+			} catch (err: unknown) {
+				const errorObj = err as { message?: string }
+				if (errorObj?.message === "Autotune aborted") {
+					setAutotuneStatusType("idle")
+					setAutotuneButtonStatus(null)
+				} else {
+					console.error("Autotune failed:", err)
+					const rawErr = errorObj?.message || ""
+					let detailMessage = ""
+
+					if (/econnrefused|failed to fetch|network error|enotfound|etimedout/i.test(rawErr)) {
+						detailMessage =
+							`Cannot connect to Ollama (${ollamaBaseUrl || "http://localhost:11434"}).\n\n` +
+							`Ensure Ollama server is running on your machine ('ollama serve' in your terminal or launch the Ollama app), and that the base URL in settings is reachable.`
+					} else if (/404|not found/i.test(rawErr)) {
+						detailMessage =
+							`Model '${effectiveOllamaModel}' was not found in Ollama.\n\n` +
+							`Make sure the model is installed by running 'ollama pull ${effectiveOllamaModel}' in your terminal.`
+					} else if (/out of memory|cuda|vram|allocation|not enough space/i.test(rawErr)) {
+						detailMessage =
+							`GPU Out of Memory (OOM).\n\n` +
+							`The model weights and KV cache exceeded your GPU's available VRAM.\n` +
+							`Try closing other GPU-accelerated applications or free up system resources.`
+					} else if (/timeout/i.test(rawErr)) {
+						detailMessage =
+							`Ollama request timed out.\n\n` +
+							`Ollama took too long allocating memory or responding to the probe request.\n` +
+							`Your GPU or system may be experiencing heavy load.`
+					} else {
+						detailMessage = `Calibration failed: ${rawErr || "Unexpected error communicating with Ollama."}`
+					}
+
+					setAutotuneStatusType("error")
+					setAutotuneButtonStatus("Failed")
+					setTunedContextSize(null)
+					setAutotuneErrorTooltip(detailMessage)
+				}
+			} finally {
+				setIsAutotuning(false)
+				autotuneAbortControllerRef.current = null
+			}
+		}, [
+			selectedProvider,
+			effectiveOllamaModel,
+			isAutotuning,
+			ollamaBaseUrl,
+			contextSize,
+			idealContextSize,
+			handleContextSizeSelect,
+			requestOllamaStatus,
+			handleFieldsChange,
+		])
 
 		// Get model display name
 		const modelDisplayName = useMemo(() => {
@@ -2195,18 +2602,18 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 					</div>
 				)}
 				{/* Row 1: Context size slider across full width with native context comparison and model architecture pill */}
-				<div className="flex flex-wrap items-center gap-2 px-3 pb-1 pt-0.5 text-xs">
+				<div className="flex items-center gap-1.5 px-3 pb-1 pt-0.5 text-xs w-full">
 					<div
 						className="flex items-center gap-1 shrink-0 text-[var(--vscode-descriptionForeground)] select-none text-[11px] font-medium cursor-help"
 						title={`Configured Context: ${contextSize.toLocaleString()} tokens`}>
 						<DatabaseIcon size={12} />
 						<span>Context:</span>
 					</div>
-					<div className="flex-1 min-w-[70px] relative flex items-center">
+					<div className="flex-1 min-w-[60px] relative flex items-center">
 						<ContextSlider
 							aria-label="Context"
 							aria-valuetext={`${contextSize.toLocaleString()} tokens (${formatContextSizeLabel(contextSize)})`}
-							className="flex-1 cursor-pointer"
+							className="flex-1 cursor-pointer w-full"
 							data-testid="context-size-slider"
 							max={CONTEXT_SIZES.length - 1}
 							min={0}
@@ -2241,348 +2648,665 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 								</TooltipContent>
 							</Tooltip>
 						)}
+						{tunedContextIndex >= 0 && selectedProvider === "ollama" && (
+							<Tooltip>
+								<TooltipTrigger asChild>
+									<button
+										aria-label={`Snap to autotuned context size: ${formatContextSizeLabel(tunedContextSize!)}`}
+										className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-2 h-4 rounded-xs bg-emerald-500 border border-[var(--vscode-editor-background,#1e1e1e)] z-20 cursor-pointer hover:scale-125 transition-transform shadow p-0 flex items-center justify-center"
+										data-testid="slider-tuned-indicator"
+										onClick={(e) => {
+											e.stopPropagation()
+											handleContextSizeChange(tunedContextIndex)
+										}}
+										style={{ left: `${(tunedContextIndex / (CONTEXT_SIZES.length - 1)) * 100}%` }}
+										title={`Autotuned Context: ${formatContextSizeLabel(tunedContextSize!)} (${tunedContextSize!.toLocaleString()} tokens)\n100% GPU VRAM Calibrated • Click to snap`}
+										type="button">
+										<span className="w-0.5 h-2 bg-[var(--vscode-editor-background,#1e1e1e)] rounded-full" />
+									</button>
+								</TooltipTrigger>
+								<TooltipContent className="text-xs p-1.5 font-mono">
+									<div className="font-semibold text-emerald-400 flex items-center gap-1">
+										<CheckIcon size={12} />
+										Autotuned Context: {formatContextSizeLabel(tunedContextSize!)}
+									</div>
+									<div className="text-[10px] text-[var(--vscode-descriptionForeground)]">
+										{tunedContextSize!.toLocaleString()} tokens • 100% GPU Calibrated
+									</div>
+									{contextSize !== tunedContextSize ? (
+										<div className="text-[10px] text-emerald-400/90 mt-1 font-sans">
+											⚠️ Context modified. Click to restore tuned size.
+										</div>
+									) : (
+										<div className="text-[10px] text-emerald-500/80 mt-1 font-sans">
+											✓ Currently at optimal calibrated size (100% GPU)
+										</div>
+									)}
+								</TooltipContent>
+							</Tooltip>
+						)}
 					</div>
 					<span
-						className="text-[11px] font-mono text-[var(--vscode-foreground)] shrink-0 min-w-[32px] text-right select-none font-semibold"
+						className="text-[11px] font-mono text-[var(--vscode-foreground)] shrink-0 whitespace-nowrap select-none font-semibold tabular-nums"
 						data-testid="context-size-value"
 						title={`Configured Context Window: ${contextSize.toLocaleString()} tokens`}>
 						{formatContextSizeLabel(contextSize)}
 					</span>
 
-					{idealContextSize > 0 && (
+					{(() => {
+						const nativeContextLimit = Number(ollamaModelDetails?.contextLength || 0)
+						const isExceedingNative =
+							selectedProvider === "ollama" && nativeContextLimit > 0 && contextSize > nativeContextLimit
+						const hasContextInfo = (selectedProvider === "ollama" && !!ollamaModelDetails) || idealContextSize > 0
+
+						if (!hasContextInfo) return null
+
+						const tooltipTitle = [
+							idealContextSize > 0
+								? `Ideal Context: ${formatContextSizeLabel(idealContextSize)} (${idealContextSize.toLocaleString()} tokens)`
+								: null,
+							tunedContextSize !== null && selectedProvider === "ollama"
+								? `Autotuned: ${formatContextSizeLabel(tunedContextSize)} (${tunedContextSize.toLocaleString()} tokens)`
+								: null,
+							`Configured: ${formatContextSizeLabel(contextSize)} (${contextSize.toLocaleString()} tokens)`,
+							nativeContextLimit > 0
+								? `Native Limit: ${formatContextSizeLabel(nativeContextLimit)} (${nativeContextLimit.toLocaleString()} tokens)`
+								: null,
+							isExceedingNative
+								? `⚠️ Warning: Exceeds model native context limit (${formatContextSizeLabel(nativeContextLimit)})`
+								: null,
+							ollamaModelDetails?.parameterSize || ollamaModelDetails?.quantizationLevel
+								? `Architecture: ${[
+										ollamaModelDetails.parameterSize,
+										ollamaModelDetails.quantizationLevel,
+										ollamaModelDetails.family,
+										ollamaModelDetails.format?.toUpperCase(),
+									]
+										.filter(Boolean)
+										.join(" • ")}`
+								: null,
+							idealContextIndex >= 0 ? "Click to snap slider to ideal context" : null,
+						]
+							.filter(Boolean)
+							.join("\n")
+
+						return (
+							<Tooltip>
+								<TooltipTrigger asChild>
+									<button
+										aria-label={
+											isExceedingNative
+												? `Model info: Configured context (${formatContextSizeLabel(contextSize)}) exceeds native limit (${formatContextSizeLabel(nativeContextLimit)})`
+												: idealContextSize > 0
+													? `Model info: Ideal context ${formatContextSizeLabel(idealContextSize)}`
+													: "Model information and architecture specs"
+										}
+										className={cn(
+											"flex items-center justify-center p-1 rounded text-[10px] font-mono transition-colors shrink-0 cursor-pointer select-none",
+											isExceedingNative
+												? "bg-[var(--vscode-inputValidation-warningBackground,#4a3510)] text-[var(--vscode-inputValidation-warningForeground,#ffcc00)] border border-[var(--vscode-inputValidation-warningBorder,#7a5515)] shadow-xs"
+												: idealContextIndex >= 0 && contextSize === CONTEXT_SIZES[idealContextIndex]
+													? "bg-[var(--vscode-badge-background)] text-[var(--vscode-badge-foreground)] border border-transparent"
+													: "bg-transparent border border-[var(--vscode-input-border)] text-[var(--vscode-descriptionForeground)] hover:text-[var(--vscode-foreground)] hover:border-[var(--vscode-focusBorder)]",
+										)}
+										data-testid="context-info-button"
+										onClick={
+											idealContextIndex >= 0 ? () => handleContextSizeChange(idealContextIndex) : undefined
+										}
+										title={tooltipTitle}
+										type="button">
+										<InfoIcon
+											className={
+												isExceedingNative
+													? "text-[var(--vscode-inputValidation-warningForeground,#ffcc00)]"
+													: "text-amber-400"
+											}
+											size={11}
+										/>
+									</button>
+								</TooltipTrigger>
+								<TooltipContent className="text-xs p-2.5 font-mono max-w-xs space-y-2">
+									<div className="font-semibold text-[var(--vscode-foreground)] flex items-center justify-between border-b border-[var(--vscode-input-border)] pb-1.5">
+										<span className="flex items-center gap-1.5">
+											<InfoIcon className="text-amber-400 shrink-0" size={12} />
+											<span>Model &amp; Context Details</span>
+										</span>
+										{ollamaModelDetails &&
+											(ollamaModelDetails.parameterSize || ollamaModelDetails.quantizationLevel) && (
+												<span
+													className="text-[10px] text-[var(--vscode-descriptionForeground)]"
+													data-testid="tooltip-model-specs-summary">
+													{[ollamaModelDetails.parameterSize, ollamaModelDetails.quantizationLevel]
+														.filter(Boolean)
+														.join(" • ")}
+												</span>
+											)}
+									</div>
+
+									{/* Context Information */}
+									<div className="space-y-1 text-[11px]">
+										{idealContextSize > 0 && (
+											<div
+												className="flex justify-between items-center"
+												data-testid="tooltip-ideal-context">
+												<span className="text-[var(--vscode-descriptionForeground)]">Ideal Context:</span>
+												<span className="font-semibold text-[var(--vscode-foreground)]">
+													{formatContextSizeLabel(idealContextSize)} (
+													{idealContextSize.toLocaleString()} tokens)
+												</span>
+											</div>
+										)}
+										{tunedContextSize !== null && selectedProvider === "ollama" && (
+											<div
+												className="flex justify-between items-center text-emerald-400"
+												data-testid="tooltip-tuned-context">
+												<span className="flex items-center gap-1">
+													<CheckIcon size={11} />
+													<span>Autotuned Context:</span>
+												</span>
+												<span className="font-semibold">
+													{formatContextSizeLabel(tunedContextSize)} (
+													{tunedContextSize.toLocaleString()} tokens)
+												</span>
+											</div>
+										)}
+										<div
+											className="flex justify-between items-center"
+											data-testid="tooltip-configured-context">
+											<span className="text-[var(--vscode-descriptionForeground)]">
+												Configured Context:
+											</span>
+											<span className="font-semibold text-[var(--vscode-foreground)]">
+												{formatContextSizeLabel(contextSize)} ({contextSize.toLocaleString()} tokens)
+											</span>
+										</div>
+										{nativeContextLimit > 0 && (
+											<div className="flex justify-between items-center" data-testid="tooltip-native-limit">
+												<span className="text-[var(--vscode-descriptionForeground)]">Native Limit:</span>
+												<span className="font-semibold text-[var(--vscode-foreground)]">
+													{formatContextSizeLabel(nativeContextLimit)} (
+													{nativeContextLimit.toLocaleString()} tokens)
+												</span>
+											</div>
+										)}
+									</div>
+
+									{/* Limit Warning / Safe Status */}
+									{nativeContextLimit > 0 &&
+										(isExceedingNative ? (
+											<div
+												className="text-[10px] p-1.5 rounded bg-[var(--vscode-inputValidation-warningBackground,#4a3510)]/50 text-[var(--vscode-inputValidation-warningForeground,#ffcc00)] border border-[var(--vscode-inputValidation-warningBorder,#7a5515)] leading-tight flex items-start gap-1"
+												data-testid="tooltip-native-context-warning">
+												<TriangleAlertIcon className="shrink-0 mt-0.5" size={12} />
+												<span>
+													Configured context exceeds native limit (
+													{formatContextSizeLabel(nativeContextLimit)}). May degrade reasoning or cause
+													hallucinations.
+												</span>
+											</div>
+										) : (
+											<div
+												className="text-[10px] text-emerald-400 flex items-center gap-1"
+												data-testid="tooltip-native-context-safe">
+												<CheckIcon size={11} />
+												<span>
+													Within native training limit ({formatContextSizeLabel(nativeContextLimit)})
+												</span>
+											</div>
+										))}
+
+									{/* Model Architecture Specs */}
+									{ollamaModelDetails && (
+										<div
+											className="pt-1.5 border-t border-[var(--vscode-input-border)] space-y-1 text-[11px]"
+											data-testid="tooltip-model-architecture-specs">
+											<div className="text-[10px] font-semibold text-[var(--vscode-descriptionForeground)] uppercase tracking-wider">
+												Architecture Specs
+											</div>
+											{ollamaModelDetails.family && (
+												<div className="flex justify-between">
+													<span className="text-[var(--vscode-descriptionForeground)]">Family:</span>
+													<span className="text-[var(--vscode-foreground)]">
+														{ollamaModelDetails.family}
+													</span>
+												</div>
+											)}
+											{ollamaModelDetails.format && (
+												<div className="flex justify-between">
+													<span className="text-[var(--vscode-descriptionForeground)]">Format:</span>
+													<span className="text-[var(--vscode-foreground)]">
+														{ollamaModelDetails.format.toUpperCase()}
+													</span>
+												</div>
+											)}
+											{ollamaModelDetails.parameterSize && (
+												<div className="flex justify-between">
+													<span className="text-[var(--vscode-descriptionForeground)]">
+														Parameters:
+													</span>
+													<span className="text-[var(--vscode-foreground)]">
+														{ollamaModelDetails.parameterSize}
+													</span>
+												</div>
+											)}
+											{ollamaModelDetails.quantizationLevel && (
+												<div className="flex justify-between">
+													<span className="text-[var(--vscode-descriptionForeground)]">
+														Quantization:
+													</span>
+													<span className="text-[var(--vscode-foreground)]">
+														{ollamaModelDetails.quantizationLevel}
+													</span>
+												</div>
+											)}
+											{ollamaModelDetails.parentModel && (
+												<div className="flex justify-between">
+													<span className="text-[var(--vscode-descriptionForeground)]">
+														Base Model:
+													</span>
+													<span className="text-[var(--vscode-foreground)]">
+														{ollamaModelDetails.parentModel}
+													</span>
+												</div>
+											)}
+										</div>
+									)}
+
+									{idealContextIndex >= 0 && (
+										<div className="text-[10px] text-[var(--vscode-descriptionForeground)] pt-1 border-t border-[var(--vscode-input-border)] text-center">
+											Click icon to snap slider to ideal context
+										</div>
+									)}
+								</TooltipContent>
+							</Tooltip>
+						)
+					})()}
+
+					{selectedProvider === "ollama" && (
 						<Tooltip>
 							<TooltipTrigger asChild>
 								<button
-									aria-label={`Model's ideal context size: ${formatContextSizeLabel(idealContextSize)}`}
+									aria-label={
+										isAutotuning
+											? `Tuning: ${autotuneButtonStatus || "Running"} (Click to cancel)`
+											: autotuneStatusType === "success"
+												? `Tuned: ${formatContextSizeLabel(contextSize)} fits 100% on GPU. Click to re-tune.`
+												: autotuneStatusType === "error"
+													? `Tuning failed: ${autotuneErrorTooltip || autotuneButtonStatus}`
+													: "Tune context size to fit 100% on GPU (VRAM)"
+									}
 									className={cn(
-										"flex items-center justify-center p-1 rounded text-[10px] font-mono transition-colors shrink-0 cursor-pointer select-none",
-										contextSize === CONTEXT_SIZES[idealContextIndex]
-											? "bg-[var(--vscode-badge-background)] text-[var(--vscode-badge-foreground)] border border-transparent"
-											: "bg-transparent border border-[var(--vscode-input-border)] text-[var(--vscode-descriptionForeground)] hover:text-[var(--vscode-foreground)] hover:border-[var(--vscode-focusBorder)]",
+										"flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono transition-colors shrink-0 cursor-pointer select-none",
+										isAutotuning
+											? "bg-[var(--vscode-button-secondaryBackground)] text-[var(--vscode-button-secondaryForeground)] border border-[var(--vscode-focusBorder)] shadow-sm"
+											: autotuneStatusType === "success"
+												? "bg-emerald-500/10 text-emerald-500 border border-emerald-500/30 font-medium"
+												: autotuneStatusType === "error"
+													? "bg-red-500/10 text-red-500 border border-red-500/30"
+													: "bg-transparent border border-[var(--vscode-input-border)] text-[var(--vscode-descriptionForeground)] hover:text-[var(--vscode-foreground)] hover:border-[var(--vscode-focusBorder)]",
 									)}
-									data-testid="ideal-context-indicator"
-									onClick={() => handleContextSizeChange(idealContextIndex)}
+									data-testid="ollama-autotune-button"
+									disabled={!effectiveOllamaModel && !isAutotuning}
+									onClick={handleAutotuneContext}
 									type="button">
-									<TargetIcon className="text-amber-400" size={11} />
+									{isAutotuning ? (
+										<>
+											<LoaderCircleIcon className="animate-spin text-amber-400 shrink-0" size={10} />
+											<span>{autotuneButtonStatus || "Tuning..."}</span>
+										</>
+									) : autotuneStatusType === "success" ? (
+										<>
+											<CheckIcon className="text-emerald-500 shrink-0" size={10} />
+											<span>Tuned</span>
+										</>
+									) : autotuneStatusType === "error" ? (
+										<>
+											<TriangleAlertIcon className="text-red-500 shrink-0" size={10} />
+											<span>Failed</span>
+										</>
+									) : (
+										<>
+											<SparklesIcon className="text-amber-400 shrink-0" size={10} />
+											<span>Tune</span>
+										</>
+									)}
 								</button>
 							</TooltipTrigger>
-							<TooltipContent className="text-xs p-1.5 font-mono">
-								<div className="font-semibold text-[var(--vscode-foreground)]">
-									Ideal Context: {formatContextSizeLabel(idealContextSize)}
+							<TooltipContent className="text-xs p-2 font-mono max-w-sm">
+								<div className="font-semibold text-[var(--vscode-foreground)] flex items-center gap-1.5">
+									{isAutotuning ? (
+										<>
+											<LoaderCircleIcon className="animate-spin text-amber-400 shrink-0" size={12} />
+											<span>Tuning in Progress</span>
+										</>
+									) : autotuneStatusType === "success" ? (
+										<>
+											<CheckIcon className="text-emerald-500 shrink-0" size={12} />
+											<span>GPU Context Tuned</span>
+										</>
+									) : autotuneStatusType === "error" ? (
+										<>
+											<TriangleAlertIcon className="text-red-500 shrink-0" size={12} />
+											<span>Calibration Failed</span>
+										</>
+									) : (
+										<>
+											<SparklesIcon className="text-amber-400 shrink-0" size={12} />
+											<span>GPU Context Tune</span>
+										</>
+									)}
 								</div>
-								<div className="text-[10px] text-[var(--vscode-descriptionForeground)]">
-									{idealContextSize.toLocaleString()} tokens • Click to snap slider
+								<div className="text-[11px] text-[var(--vscode-descriptionForeground)] mt-1 whitespace-pre-line leading-relaxed">
+									{isAutotuning
+										? "Calibrating context window size to maximize VRAM utilization without spilling into CPU RAM. Click to cancel."
+										: autotuneStatusType === "success"
+											? `Calibrated optimal context window (${formatContextSizeLabel(contextSize)} / ${contextSize.toLocaleString()} tokens) to fit 100% in GPU VRAM without CPU spillover. Click to re-tune.`
+											: autotuneStatusType === "error"
+												? autotuneErrorTooltip || "Encountered an error while communicating with Ollama."
+												: "Calibrates the context window to maximize context while keeping 100% on GPU and matching the model's ideal context size."}
 								</div>
 							</TooltipContent>
 						</Tooltip>
 					)}
 
-					{selectedProvider === "ollama" &&
-						ollamaModelDetails &&
-						Number(ollamaModelDetails.contextLength) > 0 &&
-						(contextSize > Number(ollamaModelDetails.contextLength) ? (
-							<span
-								className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono bg-[var(--vscode-inputValidation-warningBackground,#4a3510)] text-[var(--vscode-inputValidation-warningForeground,#ffcc00)] border border-[var(--vscode-inputValidation-warningBorder,#7a5515)] shrink-0 cursor-help select-none"
-								data-testid="native-context-warning"
-								title={`Configured context (${formatContextSizeLabel(contextSize)}) exceeds model native context window (${formatContextSizeLabel(Number(ollamaModelDetails.contextLength))} tokens). May cause hallucinations or degraded reasoning.`}>
-								<TriangleAlertIcon size={10} />
-								<span>&gt;{formatContextSizeLabel(Number(ollamaModelDetails.contextLength))} Native</span>
-							</span>
-						) : (
-							<span
-								className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono bg-[var(--vscode-badge-background)] text-[var(--vscode-badge-foreground)] shrink-0 cursor-help select-none"
-								data-testid="native-context-badge"
-								title={`Configured context is within the model's pre-trained native limit (${formatContextSizeLabel(Number(ollamaModelDetails.contextLength))} tokens)`}>
-								<span>{formatContextSizeLabel(Number(ollamaModelDetails.contextLength))} Native</span>
-							</span>
-						))}
-
-					{selectedProvider === "ollama" &&
-						ollamaModelDetails &&
-						(ollamaModelDetails.parameterSize || ollamaModelDetails.quantizationLevel) && (
-							<div
-								className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono bg-[var(--vscode-badge-background)] text-[var(--vscode-badge-foreground)] shrink-0 select-none cursor-default"
-								data-testid="model-specs-badge"
-								title={`Model Architecture Specs:\n• Family: ${ollamaModelDetails.family || "Unknown"}\n• Format: ${ollamaModelDetails.format || "GGUF"}\n• Parameters: ${ollamaModelDetails.parameterSize || "N/A"}\n• Quantization: ${ollamaModelDetails.quantizationLevel || "N/A"}${ollamaModelDetails.parentModel ? `\n• Base Model: ${ollamaModelDetails.parentModel}` : ""}`}>
-								<span>
-									{[ollamaModelDetails.parameterSize, ollamaModelDetails.quantizationLevel]
-										.filter(Boolean)
-										.join(" • ")}
-								</span>
-							</div>
-						)}
-
 					{selectedProvider === "ollama" && ollamaModelDetails?.supportsTools && (
-						<span
-							className="flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-mono bg-[var(--vscode-badge-background)] text-[var(--vscode-badge-foreground)] shrink-0 select-none"
-							data-testid="model-tools-badge"
-							title="Model verified to support native function / tool calling">
-							<WrenchIcon size={10} />
-							<span>Tools</span>
-						</span>
+						<Tooltip>
+							<TooltipTrigger asChild>
+								<span
+									className="flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-mono bg-[var(--vscode-badge-background)] text-[var(--vscode-badge-foreground)] shrink-0 select-none cursor-help"
+									data-testid="model-tools-badge"
+									title="Model verified to support native function / tool calling">
+									<WrenchIcon size={10} />
+									<span>Tools</span>
+								</span>
+							</TooltipTrigger>
+							<TooltipContent className="text-xs p-2.5 font-mono max-w-xs space-y-2">
+								<div className="font-semibold text-[var(--vscode-foreground)] flex items-center justify-between border-b border-[var(--vscode-input-border)] pb-1.5">
+									<span className="flex items-center gap-1.5">
+										<WrenchIcon className="text-blue-400 shrink-0" size={12} />
+										<span>Native Tool Calling</span>
+									</span>
+									<span className="px-1 py-0.5 rounded text-[9px] bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 font-semibold tracking-wider uppercase">
+										VERIFIED
+									</span>
+								</div>
+								<div className="text-[11px] text-[var(--vscode-descriptionForeground)] leading-relaxed">
+									Model natively supports Ollama function calling with structured schema validation.
+								</div>
+								<div className="space-y-1 text-[11px] pt-1 border-t border-[var(--vscode-input-border)]">
+									<div className="text-[10px] font-semibold text-[var(--vscode-descriptionForeground)] uppercase tracking-wider">
+										Supported Capabilities
+									</div>
+									<div className="flex justify-between items-center">
+										<span className="text-[var(--vscode-descriptionForeground)]">Schema Validation:</span>
+										<span className="text-[var(--vscode-foreground)] font-semibold">Strict JSON Schema</span>
+									</div>
+									<div className="flex justify-between items-center">
+										<span className="text-[var(--vscode-descriptionForeground)]">File Operations:</span>
+										<span className="text-[var(--vscode-foreground)] font-semibold">Read, Edit, Write, List</span>
+									</div>
+									<div className="flex justify-between items-center">
+										<span className="text-[var(--vscode-descriptionForeground)]">Terminal Commands:</span>
+										<span className="text-[var(--vscode-foreground)] font-semibold">Bash / Interactive Tasks</span>
+									</div>
+									<div className="flex justify-between items-center">
+										<span className="text-[var(--vscode-descriptionForeground)]">Codebase Search:</span>
+										<span className="text-[var(--vscode-foreground)] font-semibold">Ripgrep &amp; File Tree</span>
+									</div>
+									<div className="flex justify-between items-center">
+										<span className="text-[var(--vscode-descriptionForeground)]">MCP Protocol:</span>
+										<span className="text-[var(--vscode-foreground)] font-semibold">Server Tools &amp; Prompts</span>
+									</div>
+								</div>
+								<div className="text-[10px] text-[var(--vscode-descriptionForeground)] pt-1 border-t border-[var(--vscode-input-border)]">
+									Native parameters passed directly to Ollama /api/chat
+								</div>
+							</TooltipContent>
+						</Tooltip>
 					)}
 
 					{selectedProvider === "ollama" && ollamaModelDetails?.supportsVision && (
-						<span
-							className="flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-mono bg-[var(--vscode-badge-background)] text-[var(--vscode-badge-foreground)] shrink-0 select-none"
-							data-testid="model-vision-badge"
-							title="Model verified to support multimodal vision inputs">
-							<EyeIcon size={10} />
-							<span>Vision</span>
-						</span>
+						<Tooltip>
+							<TooltipTrigger asChild>
+								<span
+									className="flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-mono bg-[var(--vscode-badge-background)] text-[var(--vscode-badge-foreground)] shrink-0 select-none cursor-help"
+									data-testid="model-vision-badge"
+									title="Model verified to support multimodal vision inputs">
+									<EyeIcon size={10} />
+									<span>Vision</span>
+								</span>
+							</TooltipTrigger>
+							<TooltipContent className="text-xs p-2.5 font-mono max-w-xs space-y-2">
+								<div className="font-semibold text-[var(--vscode-foreground)] flex items-center justify-between border-b border-[var(--vscode-input-border)] pb-1.5">
+									<span className="flex items-center gap-1.5">
+										<EyeIcon className="text-purple-400 shrink-0" size={12} />
+										<span>Multimodal Vision</span>
+									</span>
+									<span className="px-1 py-0.5 rounded text-[9px] bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 font-semibold tracking-wider uppercase">
+										VERIFIED
+									</span>
+								</div>
+								<div className="text-[11px] text-[var(--vscode-descriptionForeground)] leading-relaxed">
+									Model natively accepts image inputs and visual tokens alongside text prompts.
+								</div>
+								<div className="space-y-1 text-[11px] pt-1 border-t border-[var(--vscode-input-border)]">
+									<div className="text-[10px] font-semibold text-[var(--vscode-descriptionForeground)] uppercase tracking-wider">
+										Supported Capabilities
+									</div>
+									<div className="flex justify-between items-center">
+										<span className="text-[var(--vscode-descriptionForeground)]">Image Formats:</span>
+										<span className="text-[var(--vscode-foreground)] font-semibold">PNG, JPEG, WebP</span>
+									</div>
+									<div className="flex justify-between items-center">
+										<span className="text-[var(--vscode-descriptionForeground)]">Screenshot Analysis:</span>
+										<span className="text-[var(--vscode-foreground)] font-semibold">Browser &amp; UI Review</span>
+									</div>
+									<div className="flex justify-between items-center">
+										<span className="text-[var(--vscode-descriptionForeground)]">Diagram Parsing:</span>
+										<span className="text-[var(--vscode-foreground)] font-semibold">Architecture &amp; Mockups</span>
+									</div>
+								</div>
+								<div className="text-[10px] text-[var(--vscode-descriptionForeground)] pt-1 border-t border-[var(--vscode-input-border)]">
+									Images are encoded in base64 and sent directly to Ollama
+								</div>
+							</TooltipContent>
+						</Tooltip>
 					)}
 				</div>
 
-				{/* Row 2: Ollama hardware stats, sampling controls, reasoning toggle, and telemetry */}
-				{(selectedProvider === "ollama" || latestTelemetry) && (
+				{/* Row 2: Ollama hardware stats, sampling controls, and reasoning toggle */}
+				{selectedProvider === "ollama" && (
 					<div className="flex flex-wrap items-center gap-2 px-3 pb-1.5 pt-0 text-xs">
-						{selectedProvider === "ollama" && (
-							<>
-								<div className="flex items-center gap-1 shrink-0">
+						<div className="flex items-center gap-1 shrink-0">
+							{(() => {
+								const isTuned =
+									autotuneStatusType === "success" ||
+									tunedContextSize !== null ||
+									(selectedProvider === "ollama" && Boolean(apiConfiguration?.ollamaIsTuned))
+								const isRunning = isTuned || ollamaStatus.isRunning
+								const gpuPercent = isTuned ? 100 : (ollamaStatus.isRunning ? ollamaStatus.gpuPercent : 100)
+								const vramBytes = Number(ollamaStatus.sizeVram || 0)
+								const vramGb = vramBytes > 0 ? (vramBytes / (1024 * 1024 * 1024)).toFixed(1) : null
+
+								let ratioBg = "#544120"
+								if (gpuPercent >= 100) {
+									ratioBg = "#223b2d"
+								} else if (gpuPercent <= 0) {
+									ratioBg = "#522b2b"
+								}
+
+								return (
 									<div
 										className="flex items-center gap-1.5 px-1.5 py-0.5 rounded text-[10px] font-mono select-none text-white transition-colors"
 										data-testid="gpu-cpu-ratio"
-										style={{
-											backgroundColor:
-												(ollamaStatus.isRunning ? ollamaStatus.gpuPercent : 100) >= 100
-													? "#223b2d"
-													: (ollamaStatus.isRunning ? ollamaStatus.gpuPercent : 100) <= 0
-														? "#522b2b"
-														: "#544120",
-										}}
+										style={{ backgroundColor: ratioBg }}
 										title={
-											ollamaStatus.isRunning
-												? `Ollama Active Model: ${ollamaStatus.modelName || selectedModelId}\nVRAM: ${(Number(ollamaStatus.sizeVram) / (1024 * 1024 * 1024)).toFixed(2)} GB / ${(Number(ollamaStatus.size) / (1024 * 1024 * 1024)).toFixed(2)} GB (${ollamaStatus.gpuPercent}% GPU / ${ollamaStatus.cpuPercent}% CPU)`
-												: "Ollama: Ready / Idle (loads weights into VRAM on generation)"
+											isTuned
+												? `Ollama Active Model: ${ollamaStatus.modelName || effectiveOllamaModel || selectedModelId}\n100% GPU Utilized (0% CPU Offload)${vramBytes > 0 ? `\nVRAM: ${(vramBytes / (1024 * 1024 * 1024)).toFixed(2)} GB` : ""}`
+												: isRunning
+													? `Ollama Active Model: ${ollamaStatus.modelName || selectedModelId}\nVRAM: ${(Number(ollamaStatus.sizeVram) / (1024 * 1024 * 1024)).toFixed(2)} GB / ${(Number(ollamaStatus.size) / (1024 * 1024 * 1024)).toFixed(2)} GB (${ollamaStatus.gpuPercent}% GPU / ${ollamaStatus.cpuPercent}% CPU)`
+													: "Ollama: Ready / Idle (loads weights into VRAM on generation)"
 										}>
 										<CpuIcon size={11} />
 										<span>
-											{ollamaStatus.isRunning
-												? `GPU: ${ollamaStatus.gpuPercent}% (${(Number(ollamaStatus.sizeVram) / (1024 * 1024 * 1024)).toFixed(1)} GB)`
-												: "GPU: 100% (Idle)"}
+											{isTuned
+												? `GPU: 100%${vramGb ? ` (${vramGb} GB)` : ""}`
+												: isRunning
+													? `GPU: ${ollamaStatus.gpuPercent}%${vramGb ? ` (${vramGb} GB)` : ""}`
+													: "GPU: 100% (Idle)"}
 										</span>
 									</div>
-									<button
-										aria-label="Free VRAM"
-										className="flex items-center justify-center p-1 rounded bg-[var(--vscode-button-secondaryBackground)] hover:bg-[var(--vscode-button-secondaryHoverBackground)] text-[var(--vscode-button-secondaryForeground)] cursor-pointer transition-colors border-0 select-none disabled:opacity-40 disabled:cursor-not-allowed"
-										data-testid="unload-ollama-model-button"
-										disabled={isUnloadingOllama || (!ollamaStatus.isRunning && !ollamaStatus.modelName)}
-										onClick={handleUnloadOllamaModel}
-										title={
-											ollamaStatus.isRunning
-												? `Unload ${ollamaStatus.modelName || selectedModelId} and free VRAM (${(Number(ollamaStatus.sizeVram) / (1024 * 1024 * 1024)).toFixed(2)} GB)`
-												: "No model currently loaded in VRAM"
-										}
-										type="button">
-										<PowerOffIcon className={isUnloadingOllama ? "animate-spin" : ""} size={11} />
-									</button>
-								</div>
-
-								{/* Temperature Stepper with Verbose Label */}
-								<div
-									className="flex items-center rounded border border-[var(--vscode-input-border)] bg-[var(--vscode-input-background)] text-[10px] font-mono shrink-0 select-none overflow-hidden h-5"
-									title="Temperature: 0.0 - 2.0 (0.1 step, default 0.8)">
-									<div
-										className="pl-1.5 pr-0.5 text-[var(--vscode-descriptionForeground)] flex items-center gap-1 cursor-help"
-										title={`Temperature: ${temperature.toFixed(1)}`}>
-										<ThermometerIcon size={11} />
-										<span>Temp</span>
-									</div>
-									<button
-										aria-label="Decrease temperature"
-										className="px-1 h-full flex items-center justify-center text-[var(--vscode-foreground)] hover:bg-[var(--vscode-toolbar-hoverBackground)] cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed border-0 bg-transparent transition-colors"
-										data-testid="temperature-decrement"
-										disabled={temperature <= 0.05}
-										onClick={() => handleTemperatureStep(-0.1)}
-										title="Decrease temperature (-0.1)"
-										type="button">
-										<MinusIcon size={10} />
-									</button>
-									<input
-										className="w-[26px] h-full bg-transparent text-center text-[10px] font-mono text-[var(--vscode-foreground)] focus:outline-none border-0 p-0 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-										data-testid="temperature-input"
-										max={2}
-										min={0}
-										onChange={(e) => {
-											const val = parseFloat(e.target.value)
-											if (!Number.isNaN(val)) {
-												void handleTemperatureSelect(val)
-											}
-										}}
-										step={0.1}
-										title="Temperature: 0.0 to 2.0 (default 0.8)"
-										type="number"
-										value={temperature.toFixed(1)}
-									/>
-									<button
-										aria-label="Increase temperature"
-										className="px-1 h-full flex items-center justify-center text-[var(--vscode-foreground)] hover:bg-[var(--vscode-toolbar-hoverBackground)] cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed border-0 bg-transparent transition-colors"
-										data-testid="temperature-increment"
-										disabled={temperature >= 1.95}
-										onClick={() => handleTemperatureStep(0.1)}
-										title="Increase temperature (+0.1)"
-										type="button">
-										<PlusIcon size={10} />
-									</button>
-								</div>
-
-								{/* Min-P Sampling Stepper */}
-								<div
-									className="flex items-center rounded border border-[var(--vscode-input-border)] bg-[var(--vscode-input-background)] text-[10px] font-mono shrink-0 select-none overflow-hidden h-5"
-									title="Min-P Sampling: filters out tokens with probability < min_p * top_token_prob (0.0 = disabled, default 0.0)">
-									<div
-										className="pl-1.5 pr-0.5 text-[var(--vscode-descriptionForeground)] flex items-center gap-1 cursor-help"
-										title={`Min-P: ${minP.toFixed(2)}`}>
-										<SlidersHorizontalIcon size={11} />
-										<span>Min-P</span>
-									</div>
-									<button
-										aria-label="Decrease Min-P"
-										className="px-1 h-full flex items-center justify-center text-[var(--vscode-foreground)] hover:bg-[var(--vscode-toolbar-hoverBackground)] cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed border-0 bg-transparent transition-colors"
-										data-testid="min-p-decrement"
-										disabled={minP <= 0.01}
-										onClick={() => handleMinPStep(-0.05)}
-										title="Decrease Min-P (-0.05)"
-										type="button">
-										<MinusIcon size={10} />
-									</button>
-									<input
-										className="w-[30px] h-full bg-transparent text-center text-[10px] font-mono text-[var(--vscode-foreground)] focus:outline-none border-0 p-0 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-										data-testid="min-p-input"
-										max={1}
-										min={0}
-										onChange={(e) => {
-											const val = parseFloat(e.target.value)
-											if (!Number.isNaN(val)) {
-												handleMinPChange(val)
-											}
-										}}
-										step={0.01}
-										title="Min-P: 0.00 to 1.00 (default 0.00)"
-										type="number"
-										value={minP.toFixed(2)}
-									/>
-									<button
-										aria-label="Increase Min-P"
-										className="px-1 h-full flex items-center justify-center text-[var(--vscode-foreground)] hover:bg-[var(--vscode-toolbar-hoverBackground)] cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed border-0 bg-transparent transition-colors"
-										data-testid="min-p-increment"
-										disabled={minP >= 0.99}
-										onClick={() => handleMinPStep(0.05)}
-										title="Increase Min-P (+0.05)"
-										type="button">
-										<PlusIcon size={10} />
-									</button>
-								</div>
-
-								{/* Deterministic Seed Toggle */}
-								<button
-									aria-label={seedEnabled ? "Disable deterministic seed" : "Enable deterministic seed"}
-									className={`flex items-center gap-1 px-1.5 py-0.5 rounded border text-[10px] font-mono transition-colors cursor-pointer select-none ${
-										seedEnabled
-											? "bg-[var(--vscode-button-secondaryBackground)] border-[var(--vscode-button-border,var(--vscode-button-secondaryBackground))] text-[var(--vscode-button-secondaryForeground)]"
-											: "bg-transparent border-[var(--vscode-input-border)] text-[var(--vscode-descriptionForeground)] hover:text-[var(--vscode-foreground)]"
-									}`}
-									data-testid="ollama-seed-toggle"
-									onClick={handleSeedToggle}
-									title={
-										seedEnabled
-											? `Deterministic Seed: ${seedValue} (reproducible generations)\nClick to randomize`
-											: "Deterministic Seed: Off (random outputs)\nClick to enable fixed seed (42)"
-									}
-									type="button">
-									<DicesIcon size={11} />
-									<span>Seed: {seedEnabled ? seedValue : "Off"}</span>
-								</button>
-
-								{/* Reasoning Mode Toggle (gated to reasoning models) */}
-								{isReasoningModel && (
-									<button
-										aria-label={thinkingEnabled ? "Disable reasoning mode" : "Enable reasoning mode"}
-										className={`flex items-center gap-1 px-1.5 py-0.5 rounded border text-[10px] font-mono transition-colors cursor-pointer select-none ${
-											thinkingEnabled
-												? "bg-[var(--vscode-button-secondaryBackground)] border-[var(--vscode-button-border,var(--vscode-button-secondaryBackground))] text-[var(--vscode-button-secondaryForeground)]"
-												: "bg-transparent border-[var(--vscode-input-border)] text-[var(--vscode-descriptionForeground)] hover:text-[var(--vscode-foreground)]"
-										}`}
-										data-testid="ollama-reasoning-toggle"
-										onClick={handleReasoningToggle}
-										title={`Reasoning Mode (think: ${thinkingEnabled ? "on" : "off"})\nClick to toggle reasoning thoughts for ${selectedModelId}`}
-										type="button">
-										<BrainIcon size={11} />
-										<span>Think: {thinkingEnabled ? "ON" : "OFF"}</span>
-									</button>
-								)}
-							</>
-						)}
-						<div className="ml-auto shrink-0">
-							{latestTelemetry ? (
-								<Tooltip>
-									<TooltipTrigger asChild>
-										<span
-											className="flex items-center gap-1 shrink-0 px-1.5 py-0.5 rounded bg-[var(--vscode-badge-background)] text-[var(--vscode-badge-foreground)] text-[10px] font-mono select-none cursor-pointer"
-											data-testid="inference-speed">
-											<ZapIcon size={10} />
-											<span>{latestTelemetry.tokensPerSecond} t/s</span>
-										</span>
-									</TooltipTrigger>
-									<TooltipContent className="text-xs p-2 font-mono max-w-xs">
-										<span className="font-semibold border-b border-[var(--vscode-input-border)] pb-1 mb-1 text-[var(--vscode-foreground)] flex items-center gap-1">
-											<ZapIcon className="text-yellow-400" size={12} />
-											<span>Inference Telemetry</span>
-										</span>
-										<span className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-[11px]">
-											<span className="text-[var(--vscode-descriptionForeground)]">Decode Speed:</span>
-											<span className="text-right text-[var(--vscode-foreground)] font-bold">
-												{latestTelemetry.tokensPerSecond} t/s
-											</span>
-											{latestTelemetry.promptEvalSpeed && (
-												<>
-													<span className="text-[var(--vscode-descriptionForeground)]">
-														Prefill Speed:
-													</span>
-													<span className="text-right text-[var(--vscode-foreground)]">
-														{latestTelemetry.promptEvalSpeed} t/s
-													</span>
-												</>
-											)}
-											<span className="text-[var(--vscode-descriptionForeground)]">Output Tokens:</span>
-											<span className="text-right text-[var(--vscode-foreground)]">
-												{latestTelemetry.tokensOut.toLocaleString()}
-											</span>
-											<span className="text-[var(--vscode-descriptionForeground)]">Prompt Tokens:</span>
-											<span className="text-right text-[var(--vscode-foreground)]">
-												{latestTelemetry.tokensIn.toLocaleString()}
-											</span>
-											{latestTelemetry.durationMs > 0 && (
-												<>
-													<span className="text-[var(--vscode-descriptionForeground)]">Duration:</span>
-													<span className="text-right text-[var(--vscode-foreground)]">
-														{(latestTelemetry.durationMs / 1000).toFixed(2)}s
-													</span>
-												</>
-											)}
-											{latestTelemetry.cacheReads !== undefined && latestTelemetry.cacheReads > 0 && (
-												<>
-													<span className="text-[var(--vscode-descriptionForeground)]">
-														Cached Tokens:
-													</span>
-													<span className="text-right text-[var(--vscode-foreground)]">
-														{latestTelemetry.cacheReads.toLocaleString()}
-													</span>
-												</>
-											)}
-										</span>
-									</TooltipContent>
-								</Tooltip>
-							) : (
-								<span
-									className="flex items-center gap-1 shrink-0 px-1.5 py-0.5 rounded bg-[var(--vscode-badge-background)] text-[var(--vscode-badge-foreground)] text-[10px] font-mono select-none opacity-60"
-									data-testid="inference-speed"
-									title="Inference speed of latest generation">
-									<ZapIcon size={10} />
-									<span>-- t/s</span>
-								</span>
-							)}
+								)
+							})()}
+							<button
+								aria-label="Free VRAM"
+								className="flex items-center justify-center p-1 rounded bg-[var(--vscode-button-secondaryBackground)] hover:bg-[var(--vscode-button-secondaryHoverBackground)] text-[var(--vscode-button-secondaryForeground)] cursor-pointer transition-colors border-0 select-none disabled:opacity-40 disabled:cursor-not-allowed"
+								data-testid="unload-ollama-model-button"
+								disabled={isUnloadingOllama || (!ollamaStatus.isRunning && autotuneStatusType !== "success" && !ollamaStatus.modelName)}
+								onClick={handleUnloadOllamaModel}
+								title={
+									ollamaStatus.isRunning || autotuneStatusType === "success"
+										? `Unload ${ollamaStatus.modelName || selectedModelId} and free VRAM (${(Number(ollamaStatus.sizeVram) / (1024 * 1024 * 1024)).toFixed(2)} GB)`
+										: "No model currently loaded in VRAM"
+								}
+								type="button">
+								<PowerOffIcon className={isUnloadingOllama ? "animate-spin" : ""} size={11} />
+							</button>
 						</div>
+
+						{/* Temperature Stepper with Verbose Label */}
+						<div
+							className="flex items-center rounded border border-[var(--vscode-input-border)] bg-[var(--vscode-input-background)] text-[10px] font-mono shrink-0 select-none overflow-hidden h-5"
+							title="Temperature: 0.0 - 2.0 (0.1 step, default 0.8)">
+							<div
+								className="pl-1.5 pr-0.5 text-[var(--vscode-descriptionForeground)] flex items-center gap-1 cursor-help"
+								title={`Temperature: ${temperature.toFixed(1)}`}>
+								<ThermometerIcon size={11} />
+								<span>Temp</span>
+							</div>
+							<button
+								aria-label="Decrease temperature"
+								className="px-1 h-full flex items-center justify-center text-[var(--vscode-foreground)] hover:bg-[var(--vscode-toolbar-hoverBackground)] cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed border-0 bg-transparent transition-colors"
+								data-testid="temperature-decrement"
+								disabled={temperature <= 0.05}
+								onClick={() => handleTemperatureStep(-0.1)}
+								title="Decrease temperature (-0.1)"
+								type="button">
+								<MinusIcon size={10} />
+							</button>
+							<input
+								className="w-[26px] h-full bg-transparent text-center text-[10px] font-mono text-[var(--vscode-foreground)] focus:outline-none border-0 p-0 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+								data-testid="temperature-input"
+								max={2}
+								min={0}
+								onChange={(e) => {
+									const val = parseFloat(e.target.value)
+									if (!Number.isNaN(val)) {
+										void handleTemperatureSelect(val)
+									}
+								}}
+								step={0.1}
+								title="Temperature: 0.0 to 2.0 (default 0.8)"
+								type="number"
+								value={temperature.toFixed(1)}
+							/>
+							<button
+								aria-label="Increase temperature"
+								className="px-1 h-full flex items-center justify-center text-[var(--vscode-foreground)] hover:bg-[var(--vscode-toolbar-hoverBackground)] cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed border-0 bg-transparent transition-colors"
+								data-testid="temperature-increment"
+								disabled={temperature >= 1.95}
+								onClick={() => handleTemperatureStep(0.1)}
+								title="Increase temperature (+0.1)"
+								type="button">
+								<PlusIcon size={10} />
+							</button>
+						</div>
+
+						{/* Min-P Sampling Stepper */}
+						<div
+							className="flex items-center rounded border border-[var(--vscode-input-border)] bg-[var(--vscode-input-background)] text-[10px] font-mono shrink-0 select-none overflow-hidden h-5"
+							title="Min-P Sampling: filters out tokens with probability < min_p * top_token_prob (0.0 = disabled, default 0.0)">
+							<div
+								className="pl-1.5 pr-0.5 text-[var(--vscode-descriptionForeground)] flex items-center gap-1 cursor-help"
+								title={`Min-P: ${minP.toFixed(2)}`}>
+								<SlidersHorizontalIcon size={11} />
+								<span>Min-P</span>
+							</div>
+							<button
+								aria-label="Decrease Min-P"
+								className="px-1 h-full flex items-center justify-center text-[var(--vscode-foreground)] hover:bg-[var(--vscode-toolbar-hoverBackground)] cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed border-0 bg-transparent transition-colors"
+								data-testid="min-p-decrement"
+								disabled={minP <= 0.01}
+								onClick={() => handleMinPStep(-0.05)}
+								title="Decrease Min-P (-0.05)"
+								type="button">
+								<MinusIcon size={10} />
+							</button>
+							<input
+								className="w-[30px] h-full bg-transparent text-center text-[10px] font-mono text-[var(--vscode-foreground)] focus:outline-none border-0 p-0 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+								data-testid="min-p-input"
+								max={1}
+								min={0}
+								onChange={(e) => {
+									const val = parseFloat(e.target.value)
+									if (!Number.isNaN(val)) {
+										handleMinPChange(val)
+									}
+								}}
+								step={0.01}
+								title="Min-P: 0.00 to 1.00 (default 0.00)"
+								type="number"
+								value={minP.toFixed(2)}
+							/>
+							<button
+								aria-label="Increase Min-P"
+								className="px-1 h-full flex items-center justify-center text-[var(--vscode-foreground)] hover:bg-[var(--vscode-toolbar-hoverBackground)] cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed border-0 bg-transparent transition-colors"
+								data-testid="min-p-increment"
+								disabled={minP >= 0.99}
+								onClick={() => handleMinPStep(0.05)}
+								title="Increase Min-P (+0.05)"
+								type="button">
+								<PlusIcon size={10} />
+							</button>
+						</div>
+
+						{/* Deterministic Seed Toggle */}
+						<button
+							aria-label={seedEnabled ? "Disable deterministic seed" : "Enable deterministic seed"}
+							className={`flex items-center gap-1 px-1.5 py-0.5 rounded border text-[10px] font-mono transition-colors cursor-pointer select-none ${
+								seedEnabled
+									? "bg-[var(--vscode-button-secondaryBackground)] border-[var(--vscode-button-border,var(--vscode-button-secondaryBackground))] text-[var(--vscode-button-secondaryForeground)]"
+									: "bg-transparent border-[var(--vscode-input-border)] text-[var(--vscode-descriptionForeground)] hover:text-[var(--vscode-foreground)]"
+							}`}
+							data-testid="ollama-seed-toggle"
+							onClick={handleSeedToggle}
+							title={
+								seedEnabled
+									? `Deterministic Seed: ${seedValue} (reproducible generations)\nClick to randomize`
+									: "Deterministic Seed: Off (random outputs)\nClick to enable fixed seed (42)"
+							}
+							type="button">
+							<DicesIcon size={11} />
+							<span>Seed: {seedEnabled ? seedValue : "Off"}</span>
+						</button>
+
+						{/* Reasoning Mode Toggle (gated to reasoning models) */}
+						{isReasoningModel && (
+							<button
+								aria-label={thinkingEnabled ? "Disable reasoning mode" : "Enable reasoning mode"}
+								className={`flex items-center gap-1 px-1.5 py-0.5 rounded border text-[10px] font-mono transition-colors cursor-pointer select-none ${
+									thinkingEnabled
+										? "bg-[var(--vscode-button-secondaryBackground)] border-[var(--vscode-button-border,var(--vscode-button-secondaryBackground))] text-[var(--vscode-button-secondaryForeground)]"
+										: "bg-transparent border-[var(--vscode-input-border)] text-[var(--vscode-descriptionForeground)] hover:text-[var(--vscode-foreground)]"
+								}`}
+								data-testid="ollama-reasoning-toggle"
+								onClick={handleReasoningToggle}
+								title={`Reasoning Mode (think: ${thinkingEnabled ? "on" : "off"})\nClick to toggle reasoning thoughts for ${selectedModelId}`}
+								type="button">
+								<BrainIcon size={11} />
+								<span>Think: {thinkingEnabled ? "ON" : "OFF"}</span>
+							</button>
+						)}
 					</div>
 				)}
 				<div className="flex justify-between items-center -mt-[2px] px-3 pb-2">
@@ -2705,37 +3429,101 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 							</ModelContainer>
 						</ButtonGroup>
 					</div>
-					{/* Tooltip for Plan/Act toggle remains outside the conditional rendering */}
-					<Tooltip>
-						<TooltipContent
-							className="text-xs px-2 flex flex-col gap-1"
-							hidden={shownTooltipMode === null}
-							side="top">
-							{`In ${shownTooltipMode === "act" ? "Act" : "Plan"}  mode, Cline will ${shownTooltipMode === "act" ? "complete the task immediately" : "gather information to architect a plan"}`}
-							<p className="text-description/80 text-xs mb-0">
-								Toggle w/ <kbd className="text-muted-foreground mx-1">{togglePlanActKeys}</kbd>
-							</p>
-						</TooltipContent>
-						<TooltipTrigger>
-							<SwitchContainer data-testid="mode-switch" disabled={false} onClick={onModeToggle}>
-								<Slider isAct={mode === "act"} isPlan={mode === "plan"} />
-								{["Plan", "Act"].map((m) => (
-									<div
-										aria-checked={mode === m.toLowerCase()}
-										className={cn(
-											"pt-0.5 pb-px px-2 z-10 text-xs w-1/2 text-center bg-transparent",
-											mode === m.toLowerCase() ? "text-white" : "text-input-foreground",
+					<div className="flex items-center gap-2 shrink-0">
+						{/* Tooltip for Plan/Act toggle remains outside the conditional rendering */}
+						<Tooltip>
+							<TooltipContent
+								className="text-xs px-2 flex flex-col gap-1"
+								hidden={shownTooltipMode === null}
+								side="top">
+								{`In ${shownTooltipMode === "act" ? "Act" : "Plan"}  mode, Cline will ${shownTooltipMode === "act" ? "complete the task immediately" : "gather information to architect a plan"}`}
+								<p className="text-description/80 text-xs mb-0">
+									Toggle w/ <kbd className="text-muted-foreground mx-1">{togglePlanActKeys}</kbd>
+								</p>
+							</TooltipContent>
+							<TooltipTrigger>
+								<SwitchContainer data-testid="mode-switch" disabled={false} onClick={onModeToggle}>
+									<Slider isAct={mode === "act"} isPlan={mode === "plan"} />
+									{["Plan", "Act"].map((m) => (
+										<div
+											aria-checked={mode === m.toLowerCase()}
+											className={cn(
+												"pt-0.5 pb-px px-2 z-10 text-xs w-1/2 text-center bg-transparent",
+												mode === m.toLowerCase() ? "text-white" : "text-input-foreground",
+											)}
+											key={m}
+											onMouseLeave={() => setShownTooltipMode(null)}
+											onMouseOver={() => setShownTooltipMode(m.toLowerCase() === "plan" ? "plan" : "act")}
+											role="switch">
+											{m}
+										</div>
+									))}
+								</SwitchContainer>
+							</TooltipTrigger>
+						</Tooltip>
+
+						{/* Telemetry tokens per second label placed to the right of Plan / Action toggle */}
+						{latestTelemetry && (
+							<Tooltip>
+								<TooltipTrigger asChild>
+									<span
+										className="flex items-center gap-1 shrink-0 px-1.5 py-0.5 rounded bg-[var(--vscode-badge-background)] text-[var(--vscode-badge-foreground)] text-[10px] font-mono select-none cursor-pointer"
+										data-testid="inference-speed">
+										<ZapIcon size={10} />
+										<span>{latestTelemetry.tokensPerSecond} t/s</span>
+									</span>
+								</TooltipTrigger>
+								<TooltipContent className="text-xs p-2 font-mono max-w-xs" side="top">
+									<span className="font-semibold border-b border-[var(--vscode-input-border)] pb-1 mb-1 text-[var(--vscode-foreground)] flex items-center gap-1">
+										<ZapIcon className="text-yellow-400" size={12} />
+										<span>Inference Telemetry</span>
+									</span>
+									<span className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-[11px]">
+										<span className="text-[var(--vscode-descriptionForeground)]">Decode Speed:</span>
+										<span className="text-right text-[var(--vscode-foreground)] font-bold">
+											{latestTelemetry.tokensPerSecond} t/s
+										</span>
+										{latestTelemetry.promptEvalSpeed && (
+											<>
+												<span className="text-[var(--vscode-descriptionForeground)]">
+													Prefill Speed:
+												</span>
+												<span className="text-right text-[var(--vscode-foreground)]">
+													{latestTelemetry.promptEvalSpeed} t/s
+												</span>
+											</>
 										)}
-										key={m}
-										onMouseLeave={() => setShownTooltipMode(null)}
-										onMouseOver={() => setShownTooltipMode(m.toLowerCase() === "plan" ? "plan" : "act")}
-										role="switch">
-										{m}
-									</div>
-								))}
-							</SwitchContainer>
-						</TooltipTrigger>
-					</Tooltip>
+										<span className="text-[var(--vscode-descriptionForeground)]">Output Tokens:</span>
+										<span className="text-right text-[var(--vscode-foreground)]">
+											{latestTelemetry.tokensOut.toLocaleString()}
+										</span>
+										<span className="text-[var(--vscode-descriptionForeground)]">Prompt Tokens:</span>
+										<span className="text-right text-[var(--vscode-foreground)]">
+											{latestTelemetry.tokensIn.toLocaleString()}
+										</span>
+										{latestTelemetry.durationMs > 0 && (
+											<>
+												<span className="text-[var(--vscode-descriptionForeground)]">Duration:</span>
+												<span className="text-right text-[var(--vscode-foreground)]">
+													{(latestTelemetry.durationMs / 1000).toFixed(2)}s
+												</span>
+											</>
+										)}
+										{latestTelemetry.cacheReads !== undefined && latestTelemetry.cacheReads > 0 && (
+											<>
+												<span className="text-[var(--vscode-descriptionForeground)]">
+													Cached Tokens:
+												</span>
+												<span className="text-right text-[var(--vscode-foreground)]">
+													{latestTelemetry.cacheReads.toLocaleString()}
+												</span>
+											</>
+										)}
+									</span>
+								</TooltipContent>
+							</Tooltip>
+						)}
+					</div>
 				</div>
 			</div>
 		)
