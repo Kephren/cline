@@ -461,6 +461,12 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 			() => selectedProvider === "ollama" && isOllamaReasoningModel(selectedModelId, selectedModelInfo),
 			[selectedProvider, selectedModelId, selectedModelInfo],
 		)
+		const isLlamaProvider = useMemo(() => {
+			if (!selectedProvider) return false
+			const lower = selectedProvider.toLowerCase()
+			return lower === "ollama" || lower === "llama" || lower.includes("llama")
+		}, [selectedProvider])
+
 		const { handleFieldChange, handleFieldsChange } = useApiConfigurationHandlers()
 		const [thinkingEnabled, setThinkingEnabled] = useState<boolean>(() => {
 			if (typeof apiConfiguration?.ollamaReasoning === "boolean") {
@@ -3463,7 +3469,7 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 						</Tooltip>
 
 						{/* Telemetry tokens per second label placed to the right of Plan / Action toggle */}
-						{latestTelemetry && (
+						{latestTelemetry ? (
 							<Tooltip>
 								<TooltipTrigger asChild>
 									<span
@@ -3522,7 +3528,15 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 									</span>
 								</TooltipContent>
 							</Tooltip>
-						)}
+						) : isLlamaProvider ? (
+							<span
+								className="flex items-center gap-1 shrink-0 px-1.5 py-0.5 rounded bg-[var(--vscode-badge-background)] text-[var(--vscode-badge-foreground)] text-[10px] font-mono select-none opacity-60"
+								data-testid="inference-speed"
+								title="Inference speed of latest generation">
+								<ZapIcon size={10} />
+								<span>-- t/s</span>
+							</span>
+						) : null}
 					</div>
 				</div>
 			</div>

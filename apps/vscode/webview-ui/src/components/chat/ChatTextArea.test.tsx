@@ -528,6 +528,33 @@ describe("ChatTextArea telemetry breakdown", () => {
 		expect(badge).toHaveTextContent("28.4 t/s")
 		expect(modeSwitch.closest(".shrink-0")).toContainElement(badge)
 	})
+
+	it("does not hide tokens per second badge for ollama provider even without messages", () => {
+		mocks.clineMessages = []
+		renderTextArea()
+
+		const badge = screen.getByTestId("inference-speed")
+		expect(badge).toBeInTheDocument()
+		expect(badge).toHaveTextContent("-- t/s")
+	})
+
+	it("does not hide tokens per second badge for llama provider even without messages", () => {
+		mocks.selectedProvider = "llama"
+		mocks.clineMessages = []
+		renderTextArea()
+
+		const badge = screen.getByTestId("inference-speed")
+		expect(badge).toBeInTheDocument()
+		expect(badge).toHaveTextContent("-- t/s")
+	})
+
+	it("hides tokens per second badge for non-llama providers when there is no telemetry", () => {
+		mocks.selectedProvider = "anthropic"
+		mocks.clineMessages = []
+		renderTextArea()
+
+		expect(screen.queryByTestId("inference-speed")).not.toBeInTheDocument()
+	})
 })
 
 describe("ChatTextArea Ollama Phase 2 architecture & capabilities inspector", () => {
