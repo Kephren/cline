@@ -1,5 +1,6 @@
 import { StringArray, StringRequest } from "@shared/proto/cline/common"
 import axios from "axios"
+import { parseProviderId } from "@/sdk/model-catalog/provider-id"
 import { getAxiosSettings } from "@/shared/net"
 import { Controller } from ".."
 
@@ -9,11 +10,16 @@ import { Controller } from ".."
  * @param request The request containing the base URL (optional)
  * @returns Array of model names
  */
-export async function getOllamaModels(_controller: Controller, request: StringRequest): Promise<StringArray> {
+export async function getOllamaModels(controller: Controller, request: StringRequest): Promise<StringArray> {
 	try {
-		const baseUrl = request.value || "http://localhost:11434"
+		let baseUrl: string | undefined = request.value?.trim()
+		if (!baseUrl && controller && typeof controller.getProviderConfigStore === "function") {
+			const store = controller.getProviderConfigStore()
+			const config = store?.read(parseProviderId("ollama"))
+			baseUrl = config?.baseUrl?.trim()
+		}
 
-		if (!URL.canParse(baseUrl)) {
+		if (!baseUrl || !URL.canParse(baseUrl)) {
 			return StringArray.create({ values: [] })
 		}
 

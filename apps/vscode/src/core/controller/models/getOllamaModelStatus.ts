@@ -1,20 +1,26 @@
 import { StringRequest } from "@shared/proto/cline/common"
 import { OllamaModelStatusResponse } from "@shared/proto/cline/models"
 import axios from "axios"
+import { parseProviderId } from "@/sdk/model-catalog/provider-id"
 import { getAxiosSettings } from "@/shared/net"
 import { Controller } from ".."
 
 /**
  * Fetches running model status from Ollama (/api/ps)
- * @param _controller The controller instance
+ * @param controller The controller instance
  * @param request The request containing the base URL (optional)
  * @returns OllamaModelStatusResponse with running model memory distribution (size vs size_vram)
  */
-export async function getOllamaModelStatus(_controller: Controller, request: StringRequest): Promise<OllamaModelStatusResponse> {
+export async function getOllamaModelStatus(controller: Controller, request: StringRequest): Promise<OllamaModelStatusResponse> {
 	try {
-		const baseUrl = request.value || "http://localhost:11434"
+		let baseUrl: string | undefined = request.value?.trim()
+		if (!baseUrl && controller && typeof controller.getProviderConfigStore === "function") {
+			const store = controller.getProviderConfigStore()
+			const config = store?.read(parseProviderId("ollama"))
+			baseUrl = config?.baseUrl?.trim()
+		}
 
-		if (!URL.canParse(baseUrl)) {
+		if (!baseUrl || !URL.canParse(baseUrl)) {
 			return OllamaModelStatusResponse.create({ isRunning: false })
 		}
 

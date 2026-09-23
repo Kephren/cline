@@ -1384,7 +1384,7 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 			cpuPercent: 0,
 		})
 		const [isUnloadingOllama, setIsUnloadingOllama] = useState(false)
-		const ollamaBaseUrl = apiConfiguration?.ollamaBaseUrl
+		const ollamaBaseUrl = (ollamaConfig?.baseUrl ?? apiConfiguration?.ollamaBaseUrl)?.trim()
 
 		const [ollamaModelDetails, setOllamaModelDetails] = useState<OllamaModelDetailsResponse | null>(null)
 		const [isLoadingModelDetails, setIsLoadingModelDetails] = useState(false)
@@ -1531,11 +1531,11 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 		}, [selectedProvider, selectedModelId, ollamaBaseUrl, hasConfiguredContext])
 
 		const requestOllamaStatus = useCallback(async () => {
-			if (selectedProvider !== "ollama") return
+			if (selectedProvider !== "ollama" || !ollamaBaseUrl) return
 			try {
 				const res = await ModelsServiceClient.getOllamaModelStatus(
 					StringRequest.create({
-						value: ollamaBaseUrl || "",
+						value: ollamaBaseUrl,
 					}),
 				)
 				if (res) {
@@ -1554,12 +1554,12 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 		}, [selectedProvider, ollamaBaseUrl])
 
 		const handleUnloadOllamaModel = useCallback(async () => {
-			if (selectedProvider !== "ollama") return
+			if (selectedProvider !== "ollama" || !ollamaBaseUrl) return
 			setIsUnloadingOllama(true)
 			try {
 				await ModelsServiceClient.unloadOllamaModel(
 					UnloadOllamaModelRequest.create({
-						baseUrl: ollamaBaseUrl || "",
+						baseUrl: ollamaBaseUrl,
 						modelName: ollamaStatus.modelName || selectedModelId || "",
 					}),
 				)
@@ -1580,20 +1580,20 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 		}, [selectedProvider, ollamaBaseUrl, ollamaStatus.modelName, selectedModelId, requestOllamaStatus, handleFieldsChange])
 
 		useEffect(() => {
-			if (selectedProvider === "ollama") {
+			if (selectedProvider === "ollama" && ollamaBaseUrl) {
 				requestOllamaStatus()
 				const interval = setInterval(requestOllamaStatus, 5000)
 				return () => clearInterval(interval)
 			}
-		}, [selectedProvider, requestOllamaStatus])
+		}, [selectedProvider, ollamaBaseUrl, requestOllamaStatus])
 
 		const requestOllamaModels = useCallback(async () => {
-			if (selectedProvider !== "ollama") return
+			if (selectedProvider !== "ollama" || !ollamaBaseUrl) return
 			setIsRefreshingOllama(true)
 			try {
 				const response = await ModelsServiceClient.getOllamaModels(
 					StringRequest.create({
-						value: ollamaBaseUrl || "",
+						value: ollamaBaseUrl,
 					}),
 				)
 				if (response?.values) {
@@ -1608,10 +1608,10 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 		}, [selectedProvider, ollamaBaseUrl, requestOllamaStatus])
 
 		useEffect(() => {
-			if (selectedProvider === "ollama") {
+			if (selectedProvider === "ollama" && ollamaBaseUrl) {
 				requestOllamaModels()
 			}
-		}, [selectedProvider, requestOllamaModels])
+		}, [selectedProvider, ollamaBaseUrl, requestOllamaModels])
 
 		const effectiveOllamaModel = useMemo(
 			() => selectedModelId || ollamaStatus.modelName || (ollamaModels && ollamaModels.length > 0 ? ollamaModels[0] : ""),
@@ -1834,7 +1834,11 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 			[selectedProvider, selectedModelId, effectiveOllamaModel, mode, temperature],
 		)
 
-		const idealContextSize = useMemo(() => {
+		const sliderIndex = useMemo(() => {
+			return findClosestContextSizeIndex(contextSize || 32768)
+		}, [contextSize])
+
+		const nativeContextLimit = useMemo(() => {
 			if (selectedProvider === "ollama") {
 				const nativeLen = Number(ollamaModelDetails?.contextLength)
 				if (nativeLen && nativeLen > 0) return nativeLen
@@ -1843,15 +1847,6 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 			if (fromModelInfo && fromModelInfo > 0) return fromModelInfo
 			return 0
 		}, [selectedProvider, ollamaModelDetails?.contextLength, selectedModelInfo?.contextWindow])
-
-		const idealContextIndex = useMemo(() => {
-			if (!idealContextSize || idealContextSize <= 0) return -1
-			return findClosestContextSizeIndex(idealContextSize)
-		}, [idealContextSize])
-
-		const sliderIndex = useMemo(() => {
-			return findClosestContextSizeIndex(contextSize || 32768)
-		}, [contextSize])
 
 		const isConfigTuned =
 			selectedProvider === "ollama" &&
@@ -1971,6 +1966,15 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 				return
 			}
 
+			if (!ollamaBaseUrl) {
+				setAutotuneStatusType("error")
+				setAutotuneButtonStatus("Failed")
+				setAutotuneErrorTooltip(
+					"Ollama server address is not configured.\n\nPlease configure the Ollama base URL in Settings (Providers > Ollama) before running autotune calibration.",
+				)
+				return
+			}
+
 			const abortController = new AbortController()
 			autotuneAbortControllerRef.current = abortController
 			setIsAutotuning(true)
@@ -1985,7 +1989,7 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 				const probeFn: ProbeContextFunction = async (testCtx: number): Promise<AutotuneProbeResult> => {
 					const res = await ModelsServiceClient.probeOllamaContext(
 						ProbeOllamaContextRequest.create({
-							baseUrl: ollamaBaseUrl || "http://localhost:11434",
+							baseUrl: ollamaBaseUrl,
 							modelName: effectiveOllamaModel,
 							contextWindow: testCtx,
 						}),
@@ -2004,9 +2008,31 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 					}
 				}
 
-				// The goal is to set the maximum amount of context with 100% GPU usage, up to the model's ideal
-				const targetMaxThreshold =
-					idealContextSize > 0 ? idealContextSize : contextSize > 0 ? contextSize : 32768
+				// The goal is to set the maximum amount of context with 100% GPU usage, bounded by the model's Native Limit
+				let targetMaxThreshold = nativeContextLimit
+				if (targetMaxThreshold <= 0 && effectiveOllamaModel && ollamaBaseUrl) {
+					try {
+						const details = await ModelsServiceClient.getOllamaModelDetails(
+							OllamaModelDetailsRequest.create({
+								baseUrl: ollamaBaseUrl,
+								modelName: effectiveOllamaModel,
+							}),
+						)
+						if (details) {
+							setOllamaModelDetails(details)
+							const nativeLen = Number(details.contextLength)
+							if (nativeLen > 0) {
+								targetMaxThreshold = nativeLen
+							}
+						}
+					} catch (e) {
+						console.error("Failed to fetch Ollama model details for autotune target:", e)
+					}
+				}
+
+				if (targetMaxThreshold <= 0) {
+					targetMaxThreshold = contextSize > 0 ? contextSize : 1048576
+				}
 
 				const result = await runOllamaAutotune({
 					initialContextSize: targetMaxThreshold,
@@ -2073,8 +2099,8 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 
 					if (/econnrefused|failed to fetch|network error|enotfound|etimedout/i.test(rawErr)) {
 						detailMessage =
-							`Cannot connect to Ollama (${ollamaBaseUrl || "http://localhost:11434"}).\n\n` +
-							`Ensure Ollama server is running on your machine ('ollama serve' in your terminal or launch the Ollama app), and that the base URL in settings is reachable.`
+							`Cannot connect to Ollama at ${ollamaBaseUrl}.\n\n` +
+							`Ensure the Ollama server is running and reachable at the configured address, and check your network or firewall settings.`
 					} else if (/404|not found/i.test(rawErr)) {
 						detailMessage =
 							`Model '${effectiveOllamaModel}' was not found in Ollama.\n\n` +
@@ -2108,7 +2134,7 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 			isAutotuning,
 			ollamaBaseUrl,
 			contextSize,
-			idealContextSize,
+			nativeContextLimit,
 			handleContextSizeSelect,
 			requestOllamaStatus,
 			handleFieldsChange,
@@ -2627,33 +2653,6 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 							step={1}
 							value={[sliderIndex]}
 						/>
-						{idealContextIndex >= 0 && (
-							<Tooltip>
-								<TooltipTrigger asChild>
-									<button
-										aria-label={`Snap to model ideal context size: ${formatContextSizeLabel(idealContextSize)}`}
-										className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-2 h-4 rounded-xs bg-[var(--vscode-editorWarning-foreground,#ffcc00)] border border-[var(--vscode-editor-background,#1e1e1e)] z-10 cursor-pointer hover:scale-125 transition-transform shadow p-0 flex items-center justify-center"
-										data-testid="slider-ideal-indicator"
-										onClick={(e) => {
-											e.stopPropagation()
-											handleContextSizeChange(idealContextIndex)
-										}}
-										style={{ left: `${(idealContextIndex / (CONTEXT_SIZES.length - 1)) * 100}%` }}
-										title={`Model's ideal context size: ${formatContextSizeLabel(idealContextSize)} (${idealContextSize.toLocaleString()} tokens)\nClick to snap slider`}
-										type="button">
-										<span className="w-0.5 h-2 bg-[var(--vscode-editor-background,#1e1e1e)] rounded-full" />
-									</button>
-								</TooltipTrigger>
-								<TooltipContent className="text-xs p-1.5 font-mono">
-									<div className="font-semibold text-[var(--vscode-foreground)]">
-										Ideal Context: {formatContextSizeLabel(idealContextSize)}
-									</div>
-									<div className="text-[10px] text-[var(--vscode-descriptionForeground)]">
-										{idealContextSize.toLocaleString()} tokens • Click to snap
-									</div>
-								</TooltipContent>
-							</Tooltip>
-						)}
 						{tunedContextIndex >= 0 && selectedProvider === "ollama" && (
 							<Tooltip>
 								<TooltipTrigger asChild>
@@ -2700,17 +2699,17 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 					</span>
 
 					{(() => {
-						const nativeContextLimit = Number(ollamaModelDetails?.contextLength || 0)
 						const isExceedingNative =
 							selectedProvider === "ollama" && nativeContextLimit > 0 && contextSize > nativeContextLimit
-						const hasContextInfo = (selectedProvider === "ollama" && !!ollamaModelDetails) || idealContextSize > 0
+						const hasContextInfo =
+							selectedProvider === "ollama" ||
+							!!ollamaModelDetails ||
+							tunedContextSize !== null ||
+							Boolean(selectedModelInfo?.contextWindow)
 
 						if (!hasContextInfo) return null
 
 						const tooltipTitle = [
-							idealContextSize > 0
-								? `Ideal Context: ${formatContextSizeLabel(idealContextSize)} (${idealContextSize.toLocaleString()} tokens)`
-								: null,
 							tunedContextSize !== null && selectedProvider === "ollama"
 								? `Autotuned: ${formatContextSizeLabel(tunedContextSize)} (${tunedContextSize.toLocaleString()} tokens)`
 								: null,
@@ -2731,7 +2730,9 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 										.filter(Boolean)
 										.join(" • ")}`
 								: null,
-							idealContextIndex >= 0 ? "Click to snap slider to ideal context" : null,
+							tunedContextIndex >= 0 && contextSize !== tunedContextSize
+								? "Click to snap slider to autotuned context"
+								: null,
 						]
 							.filter(Boolean)
 							.join("\n")
@@ -2743,21 +2744,21 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 										aria-label={
 											isExceedingNative
 												? `Model info: Configured context (${formatContextSizeLabel(contextSize)}) exceeds native limit (${formatContextSizeLabel(nativeContextLimit)})`
-												: idealContextSize > 0
-													? `Model info: Ideal context ${formatContextSizeLabel(idealContextSize)}`
-													: "Model information and architecture specs"
+												: tunedContextSize !== null
+													? `Model info: Autotuned context ${formatContextSizeLabel(tunedContextSize)}`
+													: "Model information and context specs"
 										}
 										className={cn(
 											"flex items-center justify-center p-1 rounded text-[10px] font-mono transition-colors shrink-0 cursor-pointer select-none",
 											isExceedingNative
 												? "bg-[var(--vscode-inputValidation-warningBackground,#4a3510)] text-[var(--vscode-inputValidation-warningForeground,#ffcc00)] border border-[var(--vscode-inputValidation-warningBorder,#7a5515)] shadow-xs"
-												: idealContextIndex >= 0 && contextSize === CONTEXT_SIZES[idealContextIndex]
+												: tunedContextIndex >= 0 && contextSize === CONTEXT_SIZES[tunedContextIndex]
 													? "bg-[var(--vscode-badge-background)] text-[var(--vscode-badge-foreground)] border border-transparent"
 													: "bg-transparent border border-[var(--vscode-input-border)] text-[var(--vscode-descriptionForeground)] hover:text-[var(--vscode-foreground)] hover:border-[var(--vscode-focusBorder)]",
 										)}
 										data-testid="context-info-button"
 										onClick={
-											idealContextIndex >= 0 ? () => handleContextSizeChange(idealContextIndex) : undefined
+											tunedContextIndex >= 0 ? () => handleContextSizeChange(tunedContextIndex) : undefined
 										}
 										title={tooltipTitle}
 										type="button">
@@ -2791,17 +2792,6 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 
 									{/* Context Information */}
 									<div className="space-y-1 text-[11px]">
-										{idealContextSize > 0 && (
-											<div
-												className="flex justify-between items-center"
-												data-testid="tooltip-ideal-context">
-												<span className="text-[var(--vscode-descriptionForeground)]">Ideal Context:</span>
-												<span className="font-semibold text-[var(--vscode-foreground)]">
-													{formatContextSizeLabel(idealContextSize)} (
-													{idealContextSize.toLocaleString()} tokens)
-												</span>
-											</div>
-										)}
 										{tunedContextSize !== null && selectedProvider === "ollama" && (
 											<div
 												className="flex justify-between items-center text-emerald-400"
@@ -2918,9 +2908,9 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 										</div>
 									)}
 
-									{idealContextIndex >= 0 && (
+									{tunedContextIndex >= 0 && contextSize !== tunedContextSize && (
 										<div className="text-[10px] text-[var(--vscode-descriptionForeground)] pt-1 border-t border-[var(--vscode-input-border)] text-center">
-											Click icon to snap slider to ideal context
+											Click icon to snap slider to autotuned context
 										</div>
 									)}
 								</TooltipContent>
@@ -3009,7 +2999,9 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 											? `Calibrated optimal context window (${formatContextSizeLabel(contextSize)} / ${contextSize.toLocaleString()} tokens) to fit 100% in GPU VRAM without CPU spillover. Click to re-tune.`
 											: autotuneStatusType === "error"
 												? autotuneErrorTooltip || "Encountered an error while communicating with Ollama."
-												: "Calibrates the context window to maximize context while keeping 100% on GPU and matching the model's ideal context size."}
+												: nativeContextLimit > 0
+													? `Calibrates the context window to maximize context up to the model's native limit (${formatContextSizeLabel(nativeContextLimit)}) while keeping 100% on GPU.`
+													: "Calibrates the context window to maximize context up to the model's native limit while keeping 100% on GPU."}
 								</div>
 							</TooltipContent>
 						</Tooltip>

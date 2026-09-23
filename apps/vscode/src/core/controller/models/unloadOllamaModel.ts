@@ -1,20 +1,26 @@
 import { Empty } from "@shared/proto/cline/common"
 import { UnloadOllamaModelRequest } from "@shared/proto/cline/models"
 import axios from "axios"
+import { parseProviderId } from "@/sdk/model-catalog/provider-id"
 import { getAxiosSettings } from "@/shared/net"
 import { Controller } from ".."
 
 /**
  * Unloads running model(s) from Ollama memory/VRAM by setting keep_alive: 0
- * @param _controller The controller instance
+ * @param controller The controller instance
  * @param request The request containing base_url and optional model_name
  * @returns Empty
  */
-export async function unloadOllamaModel(_controller: Controller, request: UnloadOllamaModelRequest): Promise<Empty> {
+export async function unloadOllamaModel(controller: Controller, request: UnloadOllamaModelRequest): Promise<Empty> {
 	try {
-		const baseUrl = request.baseUrl || "http://localhost:11434"
+		let baseUrl = request.baseUrl?.trim()
+		if (!baseUrl && controller && typeof controller.getProviderConfigStore === "function") {
+			const store = controller.getProviderConfigStore()
+			const config = store?.read(parseProviderId("ollama"))
+			baseUrl = config?.baseUrl?.trim()
+		}
 
-		if (!URL.canParse(baseUrl)) {
+		if (!baseUrl || !URL.canParse(baseUrl)) {
 			return Empty.create({})
 		}
 

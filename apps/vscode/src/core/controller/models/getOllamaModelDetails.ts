@@ -1,23 +1,29 @@
 import { OllamaModelDetailsRequest, OllamaModelDetailsResponse } from "@shared/proto/cline/models"
 import axios from "axios"
+import { parseProviderId } from "@/sdk/model-catalog/provider-id"
 import { getAxiosSettings } from "@/shared/net"
 import { Controller } from ".."
 
 /**
  * Fetches detailed model metadata from Ollama (/api/show)
- * @param _controller The controller instance
+ * @param controller The controller instance
  * @param request The request containing base_url and model_name
  * @returns OllamaModelDetailsResponse with quantization, parameter size, native context length, and capabilities
  */
 export async function getOllamaModelDetails(
-	_controller: Controller,
+	controller: Controller,
 	request: OllamaModelDetailsRequest,
 ): Promise<OllamaModelDetailsResponse> {
 	try {
-		const baseUrl = request.baseUrl || "http://localhost:11434"
+		let baseUrl = request.baseUrl?.trim()
+		if (!baseUrl && controller && typeof controller.getProviderConfigStore === "function") {
+			const store = controller.getProviderConfigStore()
+			const config = store?.read(parseProviderId("ollama"))
+			baseUrl = config?.baseUrl?.trim()
+		}
 		const modelName = request.modelName?.trim()
 
-		if (!modelName || !URL.canParse(baseUrl)) {
+		if (!modelName || !baseUrl || !URL.canParse(baseUrl)) {
 			return OllamaModelDetailsResponse.create({})
 		}
 

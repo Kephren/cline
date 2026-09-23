@@ -147,4 +147,37 @@ describe("probeOllamaContext", () => {
 		expect(res2.success).toBe(false)
 		expect(res2.error).toBe("Model name is required")
 	})
+
+	it("returns error when base URL is not provided and not configured in store", async () => {
+		const unconfiguredReq = ProbeOllamaContextRequest.create({
+			modelName: "llama3:8b",
+			contextWindow: 8192,
+		})
+		const res = await probeOllamaContext(mockController, unconfiguredReq)
+		expect(res.success).toBe(false)
+		expect(res.error).toBe("Ollama base URL is not configured. Please configure the Ollama address in Settings.")
+	})
+
+	it("uses configured baseUrl from providerConfigStore when omitted in request", async () => {
+		axiosPost.resolves({ data: {} })
+		axiosGet.resolves({
+			data: {
+				models: [{ name: "llama3:8b", size: 1000, size_vram: 1000 }],
+			},
+		})
+
+		const controllerWithStore = {
+			getProviderConfigStore: () => ({
+				read: () => ({ baseUrl: "http://remote-ollama:11434" }),
+			}),
+		} as unknown as Controller
+
+		const req = ProbeOllamaContextRequest.create({
+			modelName: "llama3:8b",
+			contextWindow: 8192,
+		})
+		const res = await probeOllamaContext(controllerWithStore, req)
+		expect(res.success).toBe(true)
+		expect(axiosPost.firstCall.args[0]).toBe("http://remote-ollama:11434/api/generate")
+	})
 })

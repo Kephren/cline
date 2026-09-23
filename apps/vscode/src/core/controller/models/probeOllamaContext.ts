@@ -1,5 +1,6 @@
 import { ProbeOllamaContextRequest, ProbeOllamaContextResponse } from "@shared/proto/cline/models"
 import axios from "axios"
+import { parseProviderId } from "@/sdk/model-catalog/provider-id"
 import { getAxiosSettings } from "@/shared/net"
 import { Controller } from ".."
 
@@ -15,18 +16,34 @@ interface OllamaPsModel {
  * Issues an /api/generate probe request with prompt: "hi" and options: { num_ctx, num_predict: 1 },
  * then inspects /api/ps to verify whether size_vram == size (100% GPU offload).
  *
- * @param _controller The controller instance
+ * @param controller The controller instance
  * @param request ProbeOllamaContextRequest containing baseUrl, modelName, and contextWindow
  * @returns ProbeOllamaContextResponse with fitsOnGpu, gpuPercent, sizeVram, size, and optional error
  */
 export async function probeOllamaContext(
-	_controller: Controller,
+	controller: Controller,
 	request: ProbeOllamaContextRequest,
 ): Promise<ProbeOllamaContextResponse> {
 	try {
-		const baseUrl = request.baseUrl || "http://localhost:11434"
+		let baseUrl = request.baseUrl?.trim()
 		const modelName = request.modelName
 		const contextWindow = request.contextWindow
+
+		if (!baseUrl && controller && typeof controller.getProviderConfigStore === "function") {
+			const store = controller.getProviderConfigStore()
+			const config = store?.read(parseProviderId("ollama"))
+			baseUrl = config?.baseUrl?.trim()
+		}
+
+		if (!baseUrl) {
+			return ProbeOllamaContextResponse.create({
+				success: false,
+				fitsOnGpu: false,
+				gpuPercent: 0,
+				cpuPercent: 100,
+				error: "Ollama base URL is not configured. Please configure the Ollama address in Settings.",
+			})
+		}
 
 		if (!URL.canParse(baseUrl)) {
 			return ProbeOllamaContextResponse.create({

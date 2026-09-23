@@ -39,11 +39,11 @@ export interface AutotuneResult {
 
 /**
  * Autotunes an Ollama model's context window size to ensure 100% of the model and KV cache
- * fits on the GPU, bounded by the model's ideal context size.
+ * fits on the GPU, bounded by the model's native limit (or maxContextSize).
  *
  * Algorithm:
- * 1. Starts with what is currently set on the context size slider (or model's ideal context).
- * 2. Samples Ollama: if 100% fits on GPU and is at model ideal, returns optimal fit.
+ * 1. Starts with what is currently set on the context size slider (or native limit target).
+ * 2. Samples Ollama: if 100% fits on GPU and is at maxContextSize, returns optimal fit.
  * 3. Starts adjustment by initialAdjustment (default 4028 tokens).
  * 4. Adjusts in halves of the last number (4028 -> 2014 -> 1007 -> stop when < 512).
  * 5. Returns optimal context size (highest tested size with 100% GPU offload, <= maxContextSize) or minContextSize (512).
@@ -95,7 +95,7 @@ export async function runOllamaAutotune({
 	steps.push(initialProgress)
 	onProgress?.(initialProgress)
 
-	// If initial sample fits and is already at maxContextSize (model's ideal), we're done!
+	// If initial sample fits and is already at maxContextSize (native limit), we're done!
 	if (initialFits && maxContextSize && currentContext >= maxContextSize) {
 		delta = 0
 	} else if (currentDirection === "up") {
@@ -124,7 +124,7 @@ export async function runOllamaAutotune({
 			bestFit = Math.max(bestFit, currentContext)
 		}
 
-		// If it fits and has reached the model's ideal context size, stop
+		// If it fits and has reached the max context size (native limit), stop
 		if (fits && maxContextSize && currentContext >= maxContextSize) {
 			break
 		}

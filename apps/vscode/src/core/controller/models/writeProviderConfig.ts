@@ -21,6 +21,9 @@ export async function writeProviderConfig(
 	if (hasProviderCatalogStateController(controller)) {
 		if (providerId.toString() === "ollama") {
 			const updates: Record<string, any> = {}
+			if (request.patch?.baseUrl !== undefined) {
+				updates.ollamaBaseUrl = request.patch.baseUrl?.trim() || undefined
+			}
 			if (request.patch?.contextWindow !== undefined) {
 				const ctx = request.patch.contextWindow
 				updates.ollamaApiOptionsCtxNum = ctx > 0 ? String(ctx) : undefined

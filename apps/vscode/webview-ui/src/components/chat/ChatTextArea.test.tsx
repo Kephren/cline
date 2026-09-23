@@ -337,39 +337,18 @@ describe("ChatTextArea context size adjustment", () => {
 		expect(label).toHaveTextContent("1.5K")
 	})
 
-	it("renders ideal context size indicator without 'Ideal' text label and allows 1-click snapping", async () => {
+	it("renders context info button without ideal indicator or ideal context labeling", async () => {
 		mocks.selectedModelInfo = { contextWindow: 32768 }
 		renderTextArea()
 
-		const sliderIndicator = screen.getByTestId("slider-ideal-indicator")
-		expect(sliderIndicator).toBeInTheDocument()
-		// 32768 is index 22 of 42
-		expect(sliderIndicator).toHaveStyle({ left: `${(22 / 42) * 100}%` })
+		expect(screen.queryByTestId("slider-ideal-indicator")).not.toBeInTheDocument()
 
 		const infoBtn = screen.getByTestId("context-info-button")
 		expect(infoBtn).toBeInTheDocument()
-
-		// Move slider away first (e.g. to minimum 512)
-		const thumb = screen.getByRole("slider")
-		await act(async () => {
-			fireEvent.keyDown(thumb, { key: "Home" })
-		})
-
-		// Now click the info button to snap back to 32K
-		await act(async () => {
-			fireEvent.click(infoBtn)
-		})
-
-		expect(mocks.commitModelSelection).toHaveBeenCalledWith(
-			expect.objectContaining({
-				overrides: expect.objectContaining({
-					contextWindow: 32768,
-				}),
-			}),
-		)
+		expect(screen.queryByTestId("tooltip-ideal-context")).not.toBeInTheDocument()
 	})
 
-	it("updates ideal context size and slider when model changes", async () => {
+	it("updates context size and slider when model changes", async () => {
 		mocks.selectedProvider = "ollama"
 		mocks.selectedModelId = "llama3:8b"
 		mocks.selectedModelInfo = { contextWindow: 8192 }
@@ -562,6 +541,7 @@ describe("ChatTextArea Ollama Phase 2 architecture & capabilities inspector", ()
 		mocks.supportsImages = true
 		mocks.selectedProvider = "ollama"
 		mocks.selectedModelId = "qwen2.5-coder:14b"
+		mocks.providerConfig = { baseUrl: "http://127.0.0.1:11434" }
 		mocks.ollamaModelDetails = {
 			format: "gguf",
 			family: "qwen2",
@@ -596,6 +576,7 @@ describe("ChatTextArea Ollama Phase 2 native context guard", () => {
 		mocks.supportsImages = true
 		mocks.selectedProvider = "ollama"
 		mocks.selectedModelId = "llama3:8b"
+		mocks.providerConfig = { baseUrl: "http://127.0.0.1:11434" }
 	})
 
 	it("indicates warning on info button when configured context exceeds native context window", async () => {
@@ -690,6 +671,8 @@ describe("ChatTextArea Ollama GPU autotune", () => {
 		mocks.selectedProvider = "ollama"
 		mocks.selectedModelId = "llama3:8b"
 		mocks.selectedModelInfo = { contextWindow: 16384 }
+		mocks.providerConfig = { baseUrl: "http://127.0.0.1:11434" }
+		mocks.apiConfiguration = { ollamaBaseUrl: "http://127.0.0.1:11434" }
 		mocks.commitModelSelection.mockReset()
 		mocks.probeOllamaContext = vi.fn(async (req: any) => {
 			// Simulating GPU capacity fitting up to 16,384 tokens
@@ -725,7 +708,7 @@ describe("ChatTextArea Ollama GPU autotune", () => {
 			fireEvent.click(autotuneBtn)
 		})
 
-		// Model's ideal context is 16384 tokens and fits on GPU
+		// Starts probing from Native Limit (16384) target
 		expect(mocks.probeOllamaContext).toHaveBeenCalledWith(
 			expect.objectContaining({
 				modelName: "llama3:8b",
@@ -772,7 +755,7 @@ describe("ChatTextArea Ollama GPU autotune", () => {
 			fireEvent.click(autotuneBtn)
 		})
 
-		// Should have probed 32768 first (model ideal)
+		// Should have probed 32768 first (Native Limit target)
 		expect(mocks.probeOllamaContext).toHaveBeenCalledWith(
 			expect.objectContaining({
 				modelName: "llama3:8b",
@@ -786,7 +769,6 @@ describe("ChatTextArea Ollama GPU autotune", () => {
 				contextWindow: 32768 - 4028,
 			}),
 		)
-
 		expect(autotuneBtn).toHaveTextContent("Tuned")
 		expect(autotuneBtn).toHaveClass("text-emerald-500")
 	})
@@ -808,8 +790,24 @@ describe("ChatTextArea Ollama GPU autotune", () => {
 
 		expect(autotuneBtn).toHaveTextContent("Failed")
 		expect(autotuneBtn).toHaveClass("text-red-500")
-		expect(autotuneBtn).toHaveAttribute("aria-label", expect.stringContaining("Cannot connect to Ollama"))
-		expect(autotuneBtn).toHaveAttribute("aria-label", expect.stringContaining("ollama serve"))
+		expect(autotuneBtn).toHaveAttribute("aria-label", expect.stringContaining("Cannot connect to Ollama at http://127.0.0.1:11434"))
+		expect(autotuneBtn).toHaveAttribute("aria-label", expect.stringContaining("reachable at the configured address"))
+	})
+
+	it("displays error when Ollama server address is not configured without assuming local server", async () => {
+		mocks.providerConfig = undefined
+		mocks.apiConfiguration = {}
+
+		renderTextArea()
+		const autotuneBtn = screen.getByTestId("ollama-autotune-button")
+
+		await act(async () => {
+			fireEvent.click(autotuneBtn)
+		})
+
+		expect(mocks.probeOllamaContext).not.toHaveBeenCalled()
+		expect(autotuneBtn).toHaveTextContent("Failed")
+		expect(autotuneBtn).toHaveAttribute("aria-label", expect.stringContaining("Ollama server address is not configured"))
 	})
 
 	it("allows cancelling autotuning mid-calibration", async () => {
@@ -844,7 +842,8 @@ describe("ChatTextArea Ollama settings persistence", () => {
 			contextWindow: 32768,
 			supportsReasoning: true,
 		}
-		mocks.apiConfiguration = {}
+		mocks.providerConfig = { baseUrl: "http://127.0.0.1:11434" }
+		mocks.apiConfiguration = { ollamaBaseUrl: "http://127.0.0.1:11434" }
 		mocks.updateApiConfigurationProto.mockClear()
 	})
 
@@ -1083,7 +1082,7 @@ describe("ChatTextArea Ollama settings persistence", () => {
 			fireEvent.click(autotuneBtn)
 		})
 
-		// Slider value is updated to autotuned context size
+		// Slider value is updated to autotuned context size (8K native limit fits on GPU)
 		expect(screen.getByTestId("context-size-value")).toHaveTextContent("8K")
 		expect(autotuneBtn).toHaveTextContent("Tuned")
 
@@ -1093,7 +1092,37 @@ describe("ChatTextArea Ollama settings persistence", () => {
 		expect(tunedIndicator).toHaveClass("bg-emerald-500")
 	})
 
-	it("does not overwrite tuned context size with ideal context size when getOllamaModelDetails resolves on load", async () => {
+	it("targets model native context length from ollamaModelDetails during autotune", async () => {
+		mocks.selectedModelInfo = undefined
+		mocks.ollamaModelDetails = {
+			contextLength: 65536,
+			parameterSize: "8.0B",
+			quantizationLevel: "Q4_0",
+		}
+		mocks.probeOllamaContext = vi.fn(async () => ({
+			success: true,
+			fitsOnGpu: true,
+			gpuPercent: 100,
+			sizeVram: 4000000000,
+			size: 4000000000,
+		}))
+
+		renderTextArea()
+		const autotuneBtn = screen.getByTestId("ollama-autotune-button")
+		await act(async () => {
+			fireEvent.click(autotuneBtn)
+		})
+
+		expect(mocks.probeOllamaContext).toHaveBeenCalledWith(
+			expect.objectContaining({
+				contextWindow: 65536,
+			}),
+		)
+		expect(screen.getByTestId("context-size-value")).toHaveTextContent("64K")
+		expect(autotuneBtn).toHaveTextContent("Tuned")
+	})
+
+	it("does not overwrite tuned context size with model context length when getOllamaModelDetails resolves on load", async () => {
 		mocks.apiConfiguration = {
 			ollamaIsTuned: true,
 			ollamaTunedContextSize: 16384,
@@ -1104,14 +1133,14 @@ describe("ChatTextArea Ollama settings persistence", () => {
 		mocks.selectedModelId = "deepseek-r1:8b"
 		mocks.selectedModelInfo = { contextWindow: 32768 }
 		mocks.ollamaModelDetails = {
-			contextLength: 32768, // Ideal is 32K, but tuned is 16K
+			contextLength: 32768,
 			parameterSize: "8.0B",
 			quantizationLevel: "Q4_0",
 		}
 
 		renderTextArea()
 
-		// Slider must remain set to 16K (index 18) and NOT reset to ideal 32K (index 22)
+		// Slider must remain set to 16K (index 18) and NOT reset to 32K (index 22)
 		const thumb = await screen.findByRole("slider")
 		expect(thumb).toHaveAttribute("aria-valuenow", "18")
 		expect(screen.getByTestId("context-size-value")).toHaveTextContent("16K")
@@ -1121,13 +1150,11 @@ describe("ChatTextArea Ollama settings persistence", () => {
 		expect(tunedIndicator).toBeInTheDocument()
 		expect(tunedIndicator).toHaveStyle({ left: `${(18 / 42) * 100}%` })
 
-		// Ideal indicator is at 32K (index 22)
-		const idealIndicator = screen.getByTestId("slider-ideal-indicator")
-		expect(idealIndicator).toBeInTheDocument()
-		expect(idealIndicator).toHaveStyle({ left: `${(22 / 42) * 100}%` })
+		// Ideal indicator is removed
+		expect(screen.queryByTestId("slider-ideal-indicator")).not.toBeInTheDocument()
 	})
 
-	it("sets context slider to Model Context Window config value on load instead of ideal", async () => {
+	it("sets context slider to Model Context Window config value on load instead of model default", async () => {
 		mocks.apiConfiguration = {
 			ollamaApiOptionsCtxNum: "16384",
 		}
@@ -1140,7 +1167,7 @@ describe("ChatTextArea Ollama settings persistence", () => {
 
 		renderTextArea()
 
-		// Slider must initialize to Model Context Window 16K (index 18) instead of ideal 32K
+		// Slider must initialize to Model Context Window 16K (index 18) instead of 32K
 		const thumb = await screen.findByRole("slider")
 		expect(thumb).toHaveAttribute("aria-valuenow", "18")
 		expect(screen.getByTestId("context-size-value")).toHaveTextContent("16K")

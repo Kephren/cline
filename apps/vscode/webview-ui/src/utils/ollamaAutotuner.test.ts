@@ -101,10 +101,10 @@ describe("runOllamaAutotune", () => {
 		expect(result.optimalContextSize).toBe(12220)
 	})
 
-	it("stops immediately at model ideal context size when ideal fits 100% on GPU", async () => {
-		// GPU holds up to 65536 tokens, but model ideal is 32768
+	it("stops immediately at max context size when target fits 100% on GPU", async () => {
+		// GPU holds up to 65536 tokens, but target context is 32768
 		const maxGpuTokens = 65536
-		const idealTokens = 32768
+		const targetTokens = 32768
 		const probeFn = vi.fn(async (ctx: number): Promise<AutotuneProbeResult> => {
 			const fits = ctx <= maxGpuTokens
 			return {
@@ -116,17 +116,17 @@ describe("runOllamaAutotune", () => {
 
 		const progressUpdates: AutotuneStepProgress[] = []
 		const result = await runOllamaAutotune({
-			initialContextSize: idealTokens,
-			maxContextSize: idealTokens,
+			initialContextSize: targetTokens,
+			maxContextSize: targetTokens,
 			probeFn,
 			onProgress: (p) => progressUpdates.push(p),
 		})
 
 		expect(result.achievedAllGpu).toBe(true)
-		expect(result.optimalContextSize).toBe(idealTokens)
-		// Exactly 1 probe needed since ideal fits and satisfies goal
+		expect(result.optimalContextSize).toBe(targetTokens)
+		// Exactly 1 probe needed since target fits and satisfies goal
 		expect(probeFn).toHaveBeenCalledTimes(1)
-		expect(progressUpdates[0].testingContext).toBe(idealTokens)
+		expect(progressUpdates[0].testingContext).toBe(targetTokens)
 	})
 
 	it("throws error when probeFn reports failure so network errors are not swallowed", async () => {
@@ -189,8 +189,8 @@ describe("runOllamaAutotune", () => {
 		).rejects.toThrow("Autotune aborted")
 	})
 
-	it("maximizes the largest context number below ideal threshold rather than falling back to 512", async () => {
-		// Model ideal is 32,768, GPU holds up to 16,384 tokens
+	it("maximizes the largest context number below target threshold rather than falling back to 512", async () => {
+		// Target context is 32,768, GPU holds up to 16,384 tokens
 		const maxGpuTokens = 16384
 		const probeFn = vi.fn(async (ctx: number): Promise<AutotuneProbeResult> => {
 			const fits = ctx <= maxGpuTokens
