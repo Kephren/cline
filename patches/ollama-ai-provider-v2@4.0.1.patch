@@ -82,6 +82,23 @@ index aafa72c4167302af45db22e41a227cbaf02f792f..091d1a62fd4f40c1ed9f72f846969244
                  content: formatOllamaToolResultOutput(toolResponse.output)
                });
                break;
+@@ -961,16 +978,18 @@ var ollamaProviderOptions = import_v45.z
+   think: import_v45.z.boolean().optional(),
+   options: import_v45.z.object({
+     num_ctx: import_v45.z.number().optional(),
++    num_batch: import_v45.z.number().optional(),
+     repeat_last_n: import_v45.z.number().optional(),
+     repeat_penalty: import_v45.z.number().optional(),
+     temperature: import_v45.z.number().optional(),
+     seed: import_v45.z.number().optional(),
+     stop: import_v45.z.array(import_v45.z.string()).optional(),
+     num_predict: import_v45.z.number().optional(),
+     top_k: import_v45.z.number().optional(),
+     top_p: import_v45.z.number().optional(),
+     min_p: import_v45.z.number().optional()
+-  }).optional()
++  }).passthrough().optional()
+ });
 diff --git a/dist/index.mjs b/dist/index.mjs
 index 5aa396bef7354dcd523cfeabc69fe7d8ada7d4c6..77e695b555d4772d0e8de3c0df247b1fcd29838e 100644
 --- a/dist/index.mjs
@@ -166,3 +183,20 @@ index 5aa396bef7354dcd523cfeabc69fe7d8ada7d4c6..77e695b555d4772d0e8de3c0df247b1f
                  content: formatOllamaToolResultOutput(toolResponse.output)
                });
                break;
+@@ -965,16 +982,18 @@ var ollamaProviderOptions = z5.object({
+   think: z5.boolean().optional(),
+   options: z5.object({
+     num_ctx: z5.number().optional(),
++    num_batch: z5.number().optional(),
+     repeat_last_n: z5.number().optional(),
+     repeat_penalty: z5.number().optional(),
+     temperature: z5.number().optional(),
+     seed: z5.number().optional(),
+     stop: z5.array(z5.string()).optional(),
+     num_predict: z5.number().optional(),
+     top_k: z5.number().optional(),
+     top_p: z5.number().optional(),
+     min_p: z5.number().optional()
+-  }).optional()
++  }).passthrough().optional()
+ });

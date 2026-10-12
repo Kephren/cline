@@ -79,6 +79,7 @@ export async function probeOllamaContext(
 				options: {
 					num_ctx: Math.max(512, contextWindow),
 					num_predict: 1,
+					num_batch: 512,
 				},
 			},
 			{
@@ -115,9 +116,9 @@ export async function probeOllamaContext(
 
 		const size = Number(activeModel.size || 0)
 		const sizeVram = Number(activeModel.size_vram || 0)
-		const gpuPercent = size > 0 ? Math.round((sizeVram / size) * 100) : 100
+		const fitsOnGpu = size > 0 && sizeVram > 0 && sizeVram >= size
+		const gpuPercent = size > 0 ? (fitsOnGpu ? 100 : Math.min(99, Math.floor((sizeVram / size) * 100))) : 100
 		const cpuPercent = 100 - gpuPercent
-		const fitsOnGpu = size > 0 ? sizeVram >= size : gpuPercent >= 100
 
 		return ProbeOllamaContextResponse.create({
 			success: true,

@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import ChatTextArea from "./ChatTextArea"
+import ChatTextArea, { findLargestFittingContextSize } from "./ChatTextArea"
 
 const mocks = vi.hoisted(() => ({
 	supportsImages: true as boolean | undefined,
@@ -735,7 +735,7 @@ describe("ChatTextArea Ollama GPU autotune", () => {
 		expect(gpuRatio).not.toHaveTextContent("Idle")
 	})
 
-	it("adjusts context window downwards by 4028 when initial size exceeds GPU capacity", async () => {
+	it("adjusts context window downwards in 4K steps when initial size exceeds GPU capacity", async () => {
 		mocks.selectedModelInfo = { contextWindow: 32768 }
 		mocks.probeOllamaContext = vi.fn(async (req: any) => {
 			const fits = req.contextWindow <= 16384
@@ -762,13 +762,24 @@ describe("ChatTextArea Ollama GPU autotune", () => {
 				contextWindow: 32768,
 			}),
 		)
-		// Stepped down by 4028
+		// Minimum boundary (4096) probed
 		expect(mocks.probeOllamaContext).toHaveBeenCalledWith(
 			expect.objectContaining({
 				modelName: "llama3:8b",
-				contextWindow: 32768 - 4028,
+				contextWindow: 4096,
 			}),
 		)
+		// Midpoint (16384) probed
+		expect(mocks.probeOllamaContext).toHaveBeenCalledWith(
+			expect.objectContaining({
+				modelName: "llama3:8b",
+				contextWindow: 16384,
+			}),
+		)
+		// All probed sizes must be multiples of 4096 (4K)
+		for (const call of (mocks.probeOllamaContext as any).mock.calls) {
+			expect(call[0].contextWindow % 4096).toBe(0)
+		}
 		expect(autotuneBtn).toHaveTextContent("Tuned")
 		expect(autotuneBtn).toHaveClass("text-emerald-500")
 	})
@@ -1171,5 +1182,36 @@ describe("ChatTextArea Ollama settings persistence", () => {
 		const thumb = await screen.findByRole("slider")
 		expect(thumb).toHaveAttribute("aria-valuenow", "18")
 		expect(screen.getByTestId("context-size-value")).toHaveTextContent("16K")
+	})
+
+	it("prioritizes Model Context Window config over stale tuned size when ollamaIsTuned is false", async () => {
+		mocks.apiConfiguration = {
+			ollamaIsTuned: false,
+			ollamaTunedContextSize: 16384,
+			ollamaTunedModel: "deepseek-r1:8b",
+			ollamaApiOptionsCtxNum: "8192",
+		}
+		mocks.selectedProvider = "ollama"
+		mocks.selectedModelId = "deepseek-r1:8b"
+		mocks.selectedModelInfo = { contextWindow: 32768 }
+
+		renderTextArea()
+
+		// Slider must initialize to the manually configured 8K (index 14) rather than stale 16K
+		const thumb = await screen.findByRole("slider")
+		expect(thumb).toHaveAttribute("aria-valuenow", "14")
+		expect(screen.getByTestId("context-size-value")).toHaveTextContent("8K")
+	})
+
+	describe("findLargestFittingContextSize", () => {
+		it("floors to largest predefined context size that fits and never exceeds tested limit", () => {
+			expect(findLargestFittingContextSize(4096)).toBe(4096)
+			expect(findLargestFittingContextSize(5000)).toBe(4096)
+			expect(findLargestFittingContextSize(8192)).toBe(8192)
+			expect(findLargestFittingContextSize(23000)).toBe(20480)
+			expect(findLargestFittingContextSize(24576)).toBe(24576)
+			expect(findLargestFittingContextSize(30000)).toBe(28672)
+			expect(findLargestFittingContextSize(32768)).toBe(32768)
+		})
 	})
 })

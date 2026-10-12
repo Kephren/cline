@@ -164,6 +164,15 @@ export function findNearestContextSize(rawSize: number): number {
 	return CONTEXT_SIZES[findClosestContextSizeIndex(rawSize)]
 }
 
+export function findLargestFittingContextSize(rawSize: number): number {
+	for (let i = CONTEXT_SIZES.length - 1; i >= 0; i--) {
+		if (CONTEXT_SIZES[i] <= rawSize) {
+			return CONTEXT_SIZES[i]
+		}
+	}
+	return CONTEXT_SIZES[0]
+}
+
 export interface InferenceTelemetry {
 	tokensPerSecond: string
 	tokensIn: number
@@ -1624,6 +1633,7 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 
 			// 1. If explicitly tuned for current model, autotuned context size is prioritized
 			if (
+				Boolean(apiConfiguration?.ollamaIsTuned) &&
 				typeof apiConfiguration?.ollamaTunedContextSize === "number" &&
 				apiConfiguration.ollamaTunedContextSize > 0 &&
 				(!apiConfiguration.ollamaTunedModel ||
@@ -1644,14 +1654,19 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 				return ctxNum
 			}
 
-			// 4. Fallback to ollamaTunedContextSize even if model name wasn't specified
-			if (typeof apiConfiguration?.ollamaTunedContextSize === "number" && apiConfiguration.ollamaTunedContextSize > 0) {
+			// 4. Fallback to ollamaTunedContextSize only if explicitly tuned
+			if (
+				Boolean(apiConfiguration?.ollamaIsTuned) &&
+				typeof apiConfiguration?.ollamaTunedContextSize === "number" &&
+				apiConfiguration.ollamaTunedContextSize > 0
+			) {
 				return apiConfiguration.ollamaTunedContextSize
 			}
 
 			return undefined
 		}, [
 			selectedProvider,
+			apiConfiguration?.ollamaIsTuned,
 			apiConfiguration?.ollamaTunedContextSize,
 			apiConfiguration?.ollamaTunedModel,
 			effectiveOllamaModel,
@@ -1905,8 +1920,8 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 						if (selectedProvider === "ollama") {
 							void handleFieldsChange({
 								ollamaIsTuned: false,
-								ollamaTunedContextSize: tunedContextSize,
-								ollamaTunedModel: effectiveOllamaModel,
+								ollamaTunedContextSize: undefined,
+								ollamaTunedModel: undefined,
 							}).catch((err) => console.error("Failed to update tuned status on context change:", err))
 						}
 					}
@@ -2038,9 +2053,9 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 					initialContextSize: targetMaxThreshold,
 					maxContextSize: targetMaxThreshold,
 					probeFn,
-					initialAdjustment: 4028,
-					minContextSize: 512,
-					minStepSize: 512,
+					initialAdjustment: 4096,
+					minContextSize: 4096,
+					minStepSize: 4096,
 					onBeforeProbe: (testCtx) => {
 						setAutotuneButtonStatus(`Testing ${formatContextSizeLabel(testCtx)}...`)
 					},
@@ -2055,14 +2070,14 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 					setAutotuneButtonStatus("Failed")
 					setTunedContextSize(null)
 					setAutotuneErrorTooltip(
-						`Model weights exceed available GPU VRAM even at minimum context (512 tokens).\n\n` +
+						`Model weights exceed available GPU VRAM even at minimum context (4,096 tokens).\n\n` +
 							`This model requires more VRAM than is currently free on your GPU and cannot run 100% on GPU without offloading layers to CPU RAM.\n` +
 							`Consider using a smaller model or higher quantization (e.g. Q4_K_M).`,
 					)
 					return
 				}
 
-				const autotunedSize = findNearestContextSize(result.optimalContextSize)
+				const autotunedSize = findLargestFittingContextSize(result.optimalContextSize)
 				if (autotunedSize > 0) {
 					await handleContextSizeSelect(autotunedSize)
 				}

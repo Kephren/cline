@@ -60,7 +60,7 @@ describe("reloadOllamaModel", () => {
 			model: "qwen2.5-coder:7b",
 			prompt: "",
 			stream: false,
-			options: { num_ctx: 16384 },
+			options: { num_ctx: 16384, num_batch: 512 },
 		})
 	})
 

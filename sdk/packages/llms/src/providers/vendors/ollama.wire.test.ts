@@ -155,6 +155,15 @@ describe("ollama wire contract (real provider package)", () => {
 		expect(requests[0].options).toEqual({ num_ctx: 65536 });
 	});
 
+	it("routes options.num_batch through the provider bucket", async () => {
+		const { requests } = await streamThroughVendor({
+			responseLines: [textChunk("hi"), DONE_CHUNK],
+			prompt: userText("hello"),
+			providerOptions: { ollama: { options: { num_ctx: 65536, num_batch: 512 } } },
+		});
+		expect(requests[0].options).toEqual({ num_ctx: 65536, num_batch: 512 });
+	});
+
 	it("serializes an attachment-only user turn with string content", async () => {
 		const { requests } = await streamThroughVendor({
 			responseLines: [textChunk("hi"), DONE_CHUNK],

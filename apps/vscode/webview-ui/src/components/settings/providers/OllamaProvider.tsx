@@ -28,7 +28,7 @@ interface OllamaProviderProps {
  */
 export const OllamaProvider = ({ showModelOptions, isPopup, currentMode }: OllamaProviderProps) => {
 	const { apiConfiguration } = useExtensionState()
-	const { handleFieldChange } = useApiConfigurationHandlers()
+	const { handleFieldChange, handleFieldsChange } = useApiConfigurationHandlers()
 	const { config, write, commitSelection } = useProviderConfig("ollama")
 
 	const [ollamaModels, setOllamaModels] = useState<string[]>([])
@@ -131,8 +131,16 @@ export const OllamaProvider = ({ showModelOptions, isPopup, currentMode }: Ollam
 					if (!trimmedModelId) {
 						return
 					}
+					if (apiConfiguration?.ollamaTunedModel && apiConfiguration.ollamaTunedModel !== trimmedModelId) {
+						void handleFieldsChange({
+							ollamaIsTuned: false,
+							ollamaTunedContextSize: undefined,
+							ollamaTunedModel: undefined,
+						}).catch((err) => console.error("Failed to reset tuned state on model change:", err))
+					}
 					void commitModelSelection({
 						modelId: trimmedModelId,
+						overrides: Number.isFinite(ollamaNumCtx) && ollamaNumCtx > 0 ? { contextWindow: ollamaNumCtx } : undefined,
 						modelInfo: { ...ollamaModelInfo, name: trimmedModelId },
 					}).catch((error) => console.error("Failed to update Ollama model selection:", error))
 				}}
@@ -171,9 +179,18 @@ export const OllamaProvider = ({ showModelOptions, isPopup, currentMode }: Ollam
 							console.error("Failed to update Ollama context window:", error),
 						)
 
+						// Clear tuned state and mirror context number to state so stale autotune state doesn't override manual setting
+						void handleFieldsChange({
+							ollamaIsTuned: false,
+							ollamaTunedContextSize: undefined,
+							ollamaTunedModel: undefined,
+							ollamaApiOptionsCtxNum: numCtx ? String(numCtx) : undefined,
+						}).catch((error) => console.error("Failed to update Ollama context fields:", error))
+
 						if (selectedModel.modelId) {
 							void commitModelSelection({
 								modelId: selectedModel.modelId,
+								overrides: { contextWindow: numCtx },
 								modelInfo: {
 									...openAiModelInfoSafeDefaults,
 									name: selectedModel.modelId,

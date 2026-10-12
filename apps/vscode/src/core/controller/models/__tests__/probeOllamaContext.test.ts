@@ -61,6 +61,7 @@ describe("probeOllamaContext", () => {
 			options: {
 				num_ctx: 16384,
 				num_predict: 1,
+				num_batch: 512,
 			},
 		})
 

@@ -41,217 +41,135 @@ export interface AutotuneResult {
  * Autotunes an Ollama model's context window size to ensure 100% of the model and KV cache
  * fits on the GPU, bounded by the model's native limit (or maxContextSize).
  *
+ * All context size increments and probes are aligned to 4K byte/token steps (multiples of minStepSize, default 4096).
+ *
  * Algorithm:
- * 1. Starts with what is currently set on the context size slider (or native limit target).
- * 2. Samples Ollama: if 100% fits on GPU and is at maxContextSize, returns optimal fit.
- * 3. Starts adjustment by initialAdjustment (default 4028 tokens).
- * 4. Adjusts in halves of the last number (4028 -> 2014 -> 1007 -> stop when < 512).
- * 5. Returns optimal context size (highest tested size with 100% GPU offload, <= maxContextSize) or minContextSize (512).
+ * 1. Probes initial target context size (aligned to 4K stepUnit, <= maxContextSize).
+ * 2. If it fits and is at maxContextSize, optimal fit is achieved immediately.
+ * 3. If it does not fit, tests minContextSize (default 4096) to verify GPU feasibility.
+ * 4. Performs binary search in 4K (minStepSize) increments to find the maximum context
+ *    size that fits 100% on the GPU without spilling into CPU RAM.
+ * 5. Returns optimal context size guaranteed to have been tested and verified to fit on GPU.
  */
 export async function runOllamaAutotune({
 	initialContextSize,
 	probeFn,
 	onBeforeProbe,
 	onProgress,
-	initialAdjustment = 4028,
+	initialAdjustment = 4096,
 	maxContextSize,
-	minContextSize = 512,
-	minStepSize = 512,
+	minContextSize = 4096,
+	minStepSize = 4096,
 	signal,
 }: AutotuneOptions): Promise<AutotuneResult> {
+	const stepUnit = Math.max(1, minStepSize)
 	const steps: AutotuneStepProgress[] = []
-	let currentContext = Math.max(minContextSize, Math.round(initialContextSize))
+
+	// Align minContextSize and target context size to stepUnit
+	const alignedMin = Math.max(stepUnit, Math.floor(minContextSize / stepUnit) * stepUnit)
+	let targetContext = Math.max(alignedMin, Math.floor(initialContextSize / stepUnit) * stepUnit)
 	if (maxContextSize && maxContextSize > 0) {
-		currentContext = Math.min(maxContextSize, currentContext)
+		const alignedMax = Math.max(alignedMin, Math.floor(maxContextSize / stepUnit) * stepUnit)
+		targetContext = Math.min(alignedMax, targetContext)
 	}
+
 	let bestFit = 0
 	let stepCount = 0
-	let delta = initialAdjustment
 
-	// Step 1: Initial sample at current slider / target position
-	if (signal?.aborted) throw new Error("Autotune aborted")
-	stepCount++
-	onBeforeProbe?.(currentContext, stepCount)
-	const initialRes = await probeFn(currentContext)
-	if (!initialRes.success) {
-		throw new Error(initialRes.error || "Failed to communicate with Ollama")
-	}
-
-	const initialFits = initialRes.fitsOnGpu
-	const currentDirection: "up" | "down" = initialFits ? "up" : "down"
-
-	if (initialFits) {
-		bestFit = currentContext
-	}
-
-	const initialProgress: AutotuneStepProgress = {
-		step: stepCount,
-		testingContext: currentContext,
-		fitsOnGpu: initialFits,
-		gpuPercent: initialRes.gpuPercent,
-		direction: currentDirection,
-		stepSize: delta,
-	}
-	steps.push(initialProgress)
-	onProgress?.(initialProgress)
-
-	// If initial sample fits and is already at maxContextSize (native limit), we're done!
-	if (initialFits && maxContextSize && currentContext >= maxContextSize) {
-		delta = 0
-	} else if (currentDirection === "up") {
-		currentContext = maxContextSize ? Math.min(maxContextSize, currentContext + delta) : currentContext + delta
-	} else {
-		if (currentContext <= minContextSize) {
-			delta = 0
-		} else {
-			currentContext = Math.max(minContextSize, currentContext - delta)
-		}
-	}
-
-	// Halving loop: adjust by halves of the last number (4028 -> 2014 -> 1007 -> ...)
-	while (delta >= minStepSize) {
+	// Helper to probe a context size and record progress
+	const probe = async (
+		ctx: number,
+		direction: "up" | "down",
+		stepSize: number,
+	): Promise<AutotuneProbeResult> => {
 		if (signal?.aborted) throw new Error("Autotune aborted")
-
 		stepCount++
-		onBeforeProbe?.(currentContext, stepCount)
-		const res = await probeFn(currentContext)
+		onBeforeProbe?.(ctx, stepCount)
+		const res = await probeFn(ctx)
+		if (signal?.aborted) throw new Error("Autotune aborted")
 		if (!res.success) {
 			throw new Error(res.error || "Failed to communicate with Ollama")
 		}
-
-		const fits = res.fitsOnGpu
-		if (fits) {
-			bestFit = Math.max(bestFit, currentContext)
-		}
-
-		// If it fits and has reached the max context size (native limit), stop
-		if (fits && maxContextSize && currentContext >= maxContextSize) {
-			break
-		}
-
-		const nextDirection: "up" | "down" = fits ? "up" : "down"
-		delta = Math.floor(delta / 2)
-
 		const progress: AutotuneStepProgress = {
 			step: stepCount,
-			testingContext: currentContext,
-			fitsOnGpu: fits,
+			testingContext: ctx,
+			fitsOnGpu: res.fitsOnGpu,
 			gpuPercent: res.gpuPercent,
-			direction: nextDirection,
-			stepSize: delta,
+			direction,
+			stepSize,
 		}
 		steps.push(progress)
 		onProgress?.(progress)
-
-		if (delta < minStepSize) {
-			break
-		}
-
-		if (nextDirection === "up") {
-			currentContext = maxContextSize ? Math.min(maxContextSize, currentContext + delta) : currentContext + delta
-		} else {
-			if (currentContext <= minContextSize) {
-				break
-			}
-			currentContext = Math.max(minContextSize, currentContext - delta)
-		}
+		return res
 	}
 
-	// If no fit was found yet (bestFit === 0), search downwards between minContextSize and the lowest tested context
-	// to maximize the context size rather than prematurely settling on the minimum 512 tokens.
-	if (bestFit === 0 && currentContext > minContextSize) {
-		// First verify if minContextSize fits on GPU
-		const minAlreadyTested = steps.find((s) => s.testingContext === minContextSize)
-		let minFits = minAlreadyTested ? minAlreadyTested.fitsOnGpu : false
-
-		if (!minAlreadyTested) {
-			if (signal?.aborted) throw new Error("Autotune aborted")
-			stepCount++
-			onBeforeProbe?.(minContextSize, stepCount)
-			const minRes = await probeFn(minContextSize)
-			if (!minRes.success) {
-				throw new Error(minRes.error || "Failed to communicate with Ollama")
+	// Step 1: Initial sample at target position
+	const initialRes = await probe(targetContext, "down", initialAdjustment)
+	if (initialRes.fitsOnGpu) {
+		bestFit = targetContext
+		// If initial sample fits and is already at maxContextSize (native limit), we are done!
+		if (!maxContextSize || targetContext >= maxContextSize) {
+			return {
+				optimalContextSize: bestFit,
+				achievedAllGpu: true,
+				steps,
+				message: `Optimal context size: ${bestFit.toLocaleString()} tokens fits 100% on GPU.`,
 			}
-			minFits = minRes.fitsOnGpu
-			const minProgress: AutotuneStepProgress = {
-				step: stepCount,
-				testingContext: minContextSize,
-				fitsOnGpu: minFits,
-				gpuPercent: minRes.gpuPercent,
-				direction: "down",
-				stepSize: 0,
-			}
-			steps.push(minProgress)
-			onProgress?.(minProgress)
 		}
+		// If initialContext < maxContextSize, search upwards between targetContext and maxContextSize
+		let searchLow = targetContext
+		let searchHigh = Math.floor(maxContextSize / stepUnit) * stepUnit
+		const maxRes = await probe(searchHigh, "up", searchHigh - searchLow)
+		if (maxRes.fitsOnGpu) {
+			bestFit = searchHigh
+		} else {
+			while (searchHigh - searchLow > stepUnit) {
+				const numSteps = Math.floor((searchHigh - searchLow) / stepUnit)
+				let mid = searchLow + Math.floor(numSteps / 2) * stepUnit
+				if (mid <= searchLow) mid = searchLow + stepUnit
+				if (mid >= searchHigh) break
 
-		if (minFits) {
-			bestFit = minContextSize
-			let searchLow = minContextSize
-			let searchHigh = currentContext
-
-			while (searchHigh - searchLow >= minStepSize) {
-				if (signal?.aborted) throw new Error("Autotune aborted")
-
-				let mid = Math.round((searchLow + searchHigh) / 2)
-				// Align to nearest 512
-				mid = Math.round(mid / 512) * 512
-				if (mid <= searchLow || mid >= searchHigh) break
-
-				stepCount++
-				onBeforeProbe?.(mid, stepCount)
-				const res = await probeFn(mid)
-				if (!res.success) {
-					throw new Error(res.error || "Failed to communicate with Ollama")
-				}
-
-				const fits = res.fitsOnGpu
-				if (fits) {
+				const midRes = await probe(mid, "up", stepUnit)
+				if (midRes.fitsOnGpu) {
 					bestFit = Math.max(bestFit, mid)
 					searchLow = mid
 				} else {
 					searchHigh = mid
 				}
-
-				const progress: AutotuneStepProgress = {
-					step: stepCount,
-					testingContext: mid,
-					fitsOnGpu: fits,
-					gpuPercent: res.gpuPercent,
-					direction: fits ? "up" : "down",
-					stepSize: Math.floor((searchHigh - searchLow) / 2),
-				}
-				steps.push(progress)
-				onProgress?.(progress)
 			}
 		}
-	} else if (bestFit === 0 && !steps.some((s) => s.testingContext === minContextSize)) {
-		// Probe minContextSize if not yet tested
-		if (signal?.aborted) throw new Error("Autotune aborted")
-		stepCount++
-		onBeforeProbe?.(minContextSize, stepCount)
-		const minRes = await probeFn(minContextSize)
-		if (minRes.success && minRes.fitsOnGpu) {
-			bestFit = minContextSize
-			const minProgress: AutotuneStepProgress = {
-				step: stepCount,
-				testingContext: minContextSize,
-				fitsOnGpu: true,
-				gpuPercent: minRes.gpuPercent,
-				direction: "down",
-				stepSize: 0,
+	} else {
+		// Initial sample exceeded GPU. Verify if alignedMin fits.
+		let searchHigh = targetContext
+		let searchLow = alignedMin
+		if (searchHigh > alignedMin) {
+			const minRes = await probe(alignedMin, "down", searchHigh - alignedMin)
+			if (minRes.fitsOnGpu) {
+				bestFit = alignedMin
+				searchLow = alignedMin
+				while (searchHigh - searchLow > stepUnit) {
+					const numSteps = Math.floor((searchHigh - searchLow) / stepUnit)
+					let mid = searchLow + Math.floor(numSteps / 2) * stepUnit
+					if (mid <= searchLow) mid = searchLow + stepUnit
+					if (mid >= searchHigh) break
+
+					const midRes = await probe(mid, "up", stepUnit)
+					if (midRes.fitsOnGpu) {
+						bestFit = Math.max(bestFit, mid)
+						searchLow = mid
+					} else {
+						searchHigh = mid
+					}
+				}
 			}
-			steps.push(minProgress)
-			onProgress?.(minProgress)
 		}
 	}
 
 	const achievedAllGpu = bestFit > 0
-	const optimalContextSize = achievedAllGpu ? bestFit : minContextSize
-
+	const optimalContextSize = achievedAllGpu ? bestFit : alignedMin
 	const message = achievedAllGpu
 		? `Optimal context size: ${optimalContextSize.toLocaleString()} tokens fits 100% on GPU.`
-		: `Model weights exceed available VRAM even at minimum context size of ${minContextSize}.`
+		: `Model weights exceed available VRAM even at minimum context size of ${alignedMin}.`
 
 	return {
 		optimalContextSize,

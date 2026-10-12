@@ -5,7 +5,6 @@ import { Virtuoso } from "react-virtuoso"
 import ChatRow from "@/components/chat/ChatRow"
 import { StickyUserMessage } from "@/components/chat/task-header/StickyUserMessage"
 import { useExtensionState } from "@/context/ExtensionStateContext"
-import { cn } from "@/lib/utils"
 import { useThinkingLoaderRow } from "../../hooks/useThinkingLoaderRow"
 import type { ChatState, MessageHandlers, ScrollBehavior } from "../../types/chatTypes"
 import { isPendingResponseUnconfirmed } from "../../utils/pendingResponse"
@@ -56,6 +55,7 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 		setIsAtBottom,
 		disableAutoScrollRef,
 		handleRangeChanged,
+		lastUserMessage,
 		scrolledPastUserMessage,
 		scrollToMessage,
 		scrollToBottomSmooth,
@@ -63,20 +63,14 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 		handleLastRowContentChange,
 	} = scrollBehavior
 
-	// Find the index of the scrolled past user message for scrolling
-	const scrolledPastUserMessageIndex = useMemo(() => {
-		if (!scrolledPastUserMessage) {
-			return -1
-		}
-		return clineMessages.findIndex((msg) => msg.ts === scrolledPastUserMessage.ts)
-	}, [clineMessages, scrolledPastUserMessage])
+	const targetUserMessage = lastUserMessage ?? scrolledPastUserMessage
 
-	// Handler to scroll to the scrolled past user message
+	// Handler to scroll to the pinned user message
 	const handleScrollToUserMessage = useCallback(() => {
-		if (scrollToMessage && scrolledPastUserMessageIndex >= 0) {
-			scrollToMessage(scrolledPastUserMessageIndex)
+		if (scrollToMessage && targetUserMessage) {
+			scrollToMessage(targetUserMessage)
 		}
-	}, [scrollToMessage, scrolledPastUserMessageIndex])
+	}, [scrollToMessage, targetUserMessage])
 
 	const { expandedRows, inputValue, setActiveQuote } = chatState
 	const lastVisibleRow = useMemo(() => groupedMessages.at(-1), [groupedMessages])
@@ -244,18 +238,16 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 
 	return (
 		<div className="overflow-hidden flex flex-col h-full relative">
-			{/* Sticky User Message - positioned absolutely to avoid layout shifts */}
-			<div
-				className={cn(
-					"absolute top-0 left-0 right-0 z-10 pl-[15px] pr-[14px] bg-background",
-					scrolledPastUserMessage && "pb-2",
-				)}>
-				<StickyUserMessage
-					isVisible={!!scrolledPastUserMessage}
-					lastUserMessage={scrolledPastUserMessage}
-					onScrollToMessage={handleScrollToUserMessage}
-				/>
-			</div>
+			{/* Pinned Last Prompt - in-flow so it stays pinned under the task header without obscuring Virtuoso items */}
+			{targetUserMessage && (
+				<div className="shrink-0 z-10 px-4 pb-2 bg-background">
+					<StickyUserMessage
+						isVisible={true}
+						lastUserMessage={targetUserMessage}
+						onScrollToMessage={handleScrollToUserMessage}
+					/>
+				</div>
+			)}
 
 			<div className="grow flex relative" ref={scrollContainerRef}>
 				{/* Empty-list fast path: paint the loader immediately without waiting for the

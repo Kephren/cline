@@ -67,7 +67,10 @@ export async function reloadOllamaModel(controller: Controller, request: ReloadO
 						model: request.modelName,
 						prompt: "",
 						stream: false,
-						...(numCtx ? { options: { num_ctx: numCtx } } : {}),
+						options: {
+							...(numCtx ? { num_ctx: numCtx } : {}),
+							num_batch: 512,
+						},
 					},
 					axiosConfig,
 				)

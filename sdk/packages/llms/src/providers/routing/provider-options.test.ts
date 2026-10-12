@@ -183,6 +183,7 @@ function runCases(cases: ReadonlyArray<Case>) {
 		}
 		if (request.providerId === "ollama") {
 			expect(result.ollama).toHaveProperty("options.num_ctx");
+			expect(result.ollama).toHaveProperty("options.num_batch", 512);
 			expect(result.ollama).not.toHaveProperty("think");
 			return;
 		}
@@ -1885,7 +1886,7 @@ describe("composeAiSdkProviderOptions: family/provider thinking patches", () => 
 			expect: [
 				{
 					bucket: "ollama",
-					has: { think: false, options: { num_ctx: 32768 } },
+					has: { think: false, options: { num_ctx: 32768, num_batch: 512 } },
 				},
 				{
 					bucket: "openaiCompatible",
@@ -1903,7 +1904,7 @@ describe("composeAiSdkProviderOptions: family/provider thinking patches", () => 
 			expect: [
 				{
 					bucket: "ollama",
-					has: { think: false, options: { num_ctx: 32768 } },
+					has: { think: false, options: { num_ctx: 32768, num_batch: 512 } },
 				},
 				{
 					bucket: "openaiCompatible",
@@ -1921,7 +1922,7 @@ describe("composeAiSdkProviderOptions: family/provider thinking patches", () => 
 			expect: [
 				{
 					bucket: "ollama",
-					has: { think: true, options: { num_ctx: 32768 } },
+					has: { think: true, options: { num_ctx: 32768, num_batch: 512 } },
 					lacks: ["reasoningEffort", "reasoning"],
 				},
 				{ bucket: "openaiCompatible", lacks: ["reasoningEffort", "reasoning"] },
@@ -1936,7 +1937,7 @@ describe("composeAiSdkProviderOptions: family/provider thinking patches", () => 
 			expect: [
 				{
 					bucket: "ollama",
-					has: { think: true, options: { num_ctx: 32768 } },
+					has: { think: true, options: { num_ctx: 32768, num_batch: 512 } },
 					lacks: ["reasoningEffort", "reasoning"],
 				},
 				{ bucket: "openaiCompatible", lacks: ["reasoningEffort", "reasoning"] },
@@ -1952,7 +1953,7 @@ describe("composeAiSdkProviderOptions: family/provider thinking patches", () => 
 			expect: [
 				{
 					bucket: "ollama",
-					has: { think: true, options: { num_ctx: 32768 } },
+					has: { think: true, options: { num_ctx: 32768, num_batch: 512 } },
 					lacks: ["reasoningEffort", "reasoning"],
 				},
 				{ bucket: "openaiCompatible", lacks: ["reasoningEffort", "reasoning"] },
@@ -1972,7 +1973,7 @@ describe("composeAiSdkProviderOptions: family/provider thinking patches", () => 
 			expect: [
 				{
 					bucket: "ollama",
-					has: { think: false, options: { num_ctx: 32768 } },
+					has: { think: false, options: { num_ctx: 32768, num_batch: 512 } },
 					lacks: ["thinking"],
 				},
 				{
@@ -1992,7 +1993,7 @@ describe("composeAiSdkProviderOptions: family/provider thinking patches", () => 
 			expect: [
 				{
 					bucket: "ollama",
-					has: { think: false, options: { num_ctx: 32768 } },
+					has: { think: false, options: { num_ctx: 32768, num_batch: 512 } },
 					lacks: ["reasoningEffort", "reasoning"],
 				},
 				{ bucket: "openaiCompatible", lacks: ["reasoningEffort", "reasoning"] },
@@ -2009,7 +2010,7 @@ describe("composeAiSdkProviderOptions: family/provider thinking patches", () => 
 			expect: [
 				{
 					bucket: "ollama",
-					has: { think: false, options: { num_ctx: 65536 } },
+					has: { think: false, options: { num_ctx: 65536, num_batch: 512 } },
 					lacks: ["reasoningEffort", "reasoning"],
 				},
 				{ bucket: "openaiCompatible", lacks: ["reasoningEffort", "reasoning"] },
@@ -2025,7 +2026,7 @@ describe("composeAiSdkProviderOptions: family/provider thinking patches", () => 
 			expect: [
 				{
 					bucket: "ollama",
-					has: { think: true, options: { num_ctx: 32768 } },
+					has: { think: true, options: { num_ctx: 32768, num_batch: 512 } },
 					lacks: ["reasoningEffort", "reasoning"],
 				},
 				{ bucket: "openaiCompatible", lacks: ["think", "reasoning"] },
@@ -2040,7 +2041,7 @@ describe("composeAiSdkProviderOptions: family/provider thinking patches", () => 
 			expect: [
 				{
 					bucket: "ollama",
-					has: { options: { num_ctx: 32768 } },
+					has: { options: { num_ctx: 32768, num_batch: 512 } },
 					lacks: ["think", "reasoningEffort", "reasoning"],
 				},
 				{ bucket: "openaiCompatible", lacks: ["think", "reasoning"] },

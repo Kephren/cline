@@ -434,12 +434,24 @@ const ollamaNativeOptionsRule: ProviderOptionRule = {
 			contextWindow > 0
 				? Math.floor(contextWindow)
 				: OLLAMA_DEFAULT_CONTEXT_WINDOW;
-		const nativeOptions: Record<string, unknown> = { num_ctx: numCtx };
-
 		const modelAny = input.context.model as unknown as Record<string, unknown>;
 		const configAny = input.context.config as unknown as Record<string, unknown>;
 		const configOptions = (configAny.options ?? {}) as Record<string, unknown>;
 		const requestMeta = (input.request.metadata ?? {}) as Record<string, unknown>;
+
+		const numBatch =
+			requestMeta.num_batch ??
+			modelAny.numBatch ??
+			modelAny.num_batch ??
+			configOptions.num_batch ??
+			512;
+		const nativeOptions: Record<string, unknown> = {
+			num_ctx: numCtx,
+			num_batch:
+				typeof numBatch === "number" && Number.isFinite(numBatch) && numBatch > 0
+					? Math.floor(numBatch)
+					: 512,
+		};
 
 		const seed = requestMeta.seed ?? modelAny.seed ?? configOptions.seed;
 		if (typeof seed === "number" && Number.isFinite(seed) && seed >= 0) {

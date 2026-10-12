@@ -34,7 +34,7 @@ export async function getOllamaModelStatus(controller: Controller, request: Stri
 		const size = Number(activeModel.size || 0)
 		const sizeVram = Number(activeModel.size_vram || 0)
 
-		const gpuPercent = size > 0 ? Math.round((sizeVram / size) * 100) : 100
+		const gpuPercent = size > 0 ? (sizeVram >= size ? 100 : Math.min(99, Math.floor((sizeVram / size) * 100))) : 100
 		const cpuPercent = 100 - gpuPercent
 
 		return OllamaModelStatusResponse.create({
