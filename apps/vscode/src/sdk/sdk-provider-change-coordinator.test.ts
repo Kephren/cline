@@ -111,6 +111,19 @@ describe("SdkProviderChangeCoordinator", () => {
 		expect(options.sessionConfigBuilder.build).toHaveBeenCalledWith({ cwd: "/workspace", mode: "act" })
 	})
 
+	it("restarts immediately when Ollama reasoning changes while idle", async () => {
+		const activeSession = makeActiveSession()
+		const { coordinator, options } = makeCoordinator({ activeSession })
+
+		coordinator.handleApiConfigurationChanged(
+			{ actModeApiProvider: "ollama", actModeOllamaModelId: "llama3:latest", ollamaReasoning: true },
+			{ actModeApiProvider: "ollama", actModeOllamaModelId: "llama3:latest", ollamaReasoning: false },
+		)
+
+		await vi.waitFor(() => expect(options.sessions.replaceActiveSession).toHaveBeenCalledOnce())
+		expect(options.sessionConfigBuilder.build).toHaveBeenCalledWith({ cwd: "/workspace", mode: "act" })
+	})
+
 	it("schedules the restart while the active session is running", () => {
 		const activeSession = makeActiveSession({ isRunning: true })
 		const { coordinator, options } = makeCoordinator({ activeSession })

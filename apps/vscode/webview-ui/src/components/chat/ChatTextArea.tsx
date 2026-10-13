@@ -466,10 +466,6 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 		const modelSupportsImages = selectedModelInfo.supportsImages !== false
 		const unsupportedImagesAttached = selectedImages.length > 0 && !modelSupportsImages
 
-		const isReasoningModel = useMemo(
-			() => selectedProvider === "ollama" && isOllamaReasoningModel(selectedModelId, selectedModelInfo),
-			[selectedProvider, selectedModelId, selectedModelInfo],
-		)
 		const isLlamaProvider = useMemo(() => {
 			if (!selectedProvider) return false
 			const lower = selectedProvider.toLowerCase()
@@ -481,14 +477,18 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 			if (typeof apiConfiguration?.ollamaReasoning === "boolean") {
 				return apiConfiguration.ollamaReasoning
 			}
-			return true
+			return isOllamaReasoningModel(selectedModelId, selectedModelInfo)
 		})
 
+		const prevModelIdRef = useRef(selectedModelId)
 		useEffect(() => {
 			if (typeof apiConfiguration?.ollamaReasoning === "boolean") {
 				setThinkingEnabled(apiConfiguration.ollamaReasoning)
+			} else if (prevModelIdRef.current !== selectedModelId) {
+				prevModelIdRef.current = selectedModelId
+				setThinkingEnabled(isOllamaReasoningModel(selectedModelId, selectedModelInfo))
 			}
-		}, [apiConfiguration?.ollamaReasoning])
+		}, [apiConfiguration?.ollamaReasoning, selectedModelId, selectedModelInfo])
 
 		const handleReasoningToggle = useCallback(async () => {
 			const next = !thinkingEnabled
@@ -3303,23 +3303,21 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 							<span>Seed: {seedEnabled ? seedValue : "Off"}</span>
 						</button>
 
-						{/* Reasoning Mode Toggle (gated to reasoning models) */}
-						{isReasoningModel && (
-							<button
-								aria-label={thinkingEnabled ? "Disable reasoning mode" : "Enable reasoning mode"}
-								className={`flex items-center gap-1 px-1.5 py-0.5 rounded border text-[10px] font-mono transition-colors cursor-pointer select-none ${
-									thinkingEnabled
-										? "bg-[var(--vscode-button-secondaryBackground)] border-[var(--vscode-button-border,var(--vscode-button-secondaryBackground))] text-[var(--vscode-button-secondaryForeground)]"
-										: "bg-transparent border-[var(--vscode-input-border)] text-[var(--vscode-descriptionForeground)] hover:text-[var(--vscode-foreground)]"
-								}`}
-								data-testid="ollama-reasoning-toggle"
-								onClick={handleReasoningToggle}
-								title={`Reasoning Mode (think: ${thinkingEnabled ? "on" : "off"})\nClick to toggle reasoning thoughts for ${selectedModelId}`}
-								type="button">
-								<BrainIcon size={11} />
-								<span>Think: {thinkingEnabled ? "ON" : "OFF"}</span>
-							</button>
-						)}
+						{/* Reasoning Mode Toggle */}
+						<button
+							aria-label={thinkingEnabled ? "Disable reasoning mode" : "Enable reasoning mode"}
+							className={`flex items-center gap-1 px-1.5 py-0.5 rounded border text-[10px] font-mono transition-colors cursor-pointer select-none ${
+								thinkingEnabled
+									? "bg-[var(--vscode-button-secondaryBackground)] border-[var(--vscode-button-border,var(--vscode-button-secondaryBackground))] text-[var(--vscode-button-secondaryForeground)]"
+									: "bg-transparent border-[var(--vscode-input-border)] text-[var(--vscode-descriptionForeground)] hover:text-[var(--vscode-foreground)]"
+							}`}
+							data-testid="ollama-reasoning-toggle"
+							onClick={handleReasoningToggle}
+							title={`Reasoning Mode (think: ${thinkingEnabled ? "on" : "off"})\nClick to toggle reasoning thoughts for ${selectedModelId}`}
+							type="button">
+							<BrainIcon size={11} />
+							<span>Think: {thinkingEnabled ? "ON" : "OFF"}</span>
+						</button>
 					</div>
 				)}
 				<div className="flex justify-between items-center -mt-[2px] px-3 pb-2">

@@ -424,9 +424,10 @@ describe("ChatTextArea Ollama reasoning mode toggle", () => {
 		mocks.writeProviderConfig.mockReset()
 	})
 
-	it("hides reasoning toggle for non-reasoning Ollama models", () => {
+	it("renders reasoning toggle for non-reasoning Ollama models with thinking off by default", () => {
 		renderTextArea()
-		expect(screen.queryByTestId("ollama-reasoning-toggle")).not.toBeInTheDocument()
+		expect(screen.getByTestId("ollama-reasoning-toggle")).toBeInTheDocument()
+		expect(screen.getByTestId("ollama-reasoning-toggle")).toHaveTextContent("Think: OFF")
 	})
 
 	it("shows reasoning toggle for reasoning Ollama models by model name pattern", () => {

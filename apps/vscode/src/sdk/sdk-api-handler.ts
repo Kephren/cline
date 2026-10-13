@@ -18,6 +18,7 @@ import {
 	resolveBaseUrl,
 	resolveModelId,
 	resolveOllamaProviderConfig,
+	resolveOllamaReasoningConfig,
 	resolveVertexProviderConfig,
 } from "./cline-session-factory"
 import { toSdkProviderId } from "./model-catalog/sdk-provider-id"
@@ -87,6 +88,11 @@ export function buildSdkProviderConfig(
 	if (options?.disableReasoning) {
 		// Explicitly turn reasoning off; do not send effort or budget.
 		return { ...base, thinking: false }
+	}
+
+	if (providerId === "ollama") {
+		const ollamaReasoning = resolveOllamaReasoningConfig(configuration, modelId)
+		return { ...base, ...ollamaReasoning }
 	}
 
 	if (reasoningEffort === "low" || reasoningEffort === "medium" || reasoningEffort === "high" || reasoningEffort === "xhigh") {

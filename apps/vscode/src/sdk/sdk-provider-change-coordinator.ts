@@ -79,13 +79,16 @@ export class SdkProviderChangeCoordinator {
 		const providerChanged = previousProvider !== nextProvider
 		const modelChanged = previousModel !== nextModel
 		const contextChanged = previous.ollamaApiOptionsCtxNum !== next.ollamaApiOptionsCtxNum
+		const ollamaReasoningChanged =
+			(previousProvider === "ollama" || nextProvider === "ollama") &&
+			previous.ollamaReasoning !== next.ollamaReasoning
 
 		const currentTemperature = nextProvider ? resolveActiveTemperature(nextProvider, mode, nextModel) : undefined
 		const temperatureChanged =
 			this.lastActiveTemperature !== undefined && this.lastActiveTemperature !== currentTemperature
 		this.lastActiveTemperature = currentTemperature
 
-		if (!providerChanged && !modelChanged && !contextChanged && !temperatureChanged) {
+		if (!providerChanged && !modelChanged && !contextChanged && !temperatureChanged && !ollamaReasoningChanged) {
 			return
 		}
 
@@ -103,7 +106,9 @@ export class SdkProviderChangeCoordinator {
 				? `Active model changed for ${mode}: ${previousModel ?? "none"} -> ${nextModel ?? "none"}`
 				: contextChanged
 					? `Active context changed for ${mode}: ${previous.ollamaApiOptionsCtxNum ?? "default"} -> ${next.ollamaApiOptionsCtxNum ?? "default"}`
-					: `Active temperature changed for ${mode}: ${currentTemperature ?? "default"}`
+					: ollamaReasoningChanged
+						? `Active Ollama reasoning changed for ${mode}: ${String(previous.ollamaReasoning)} -> ${String(next.ollamaReasoning)}`
+						: `Active temperature changed for ${mode}: ${currentTemperature ?? "default"}`
 
 		Logger.log(`[SdkController] ${reason}`)
 

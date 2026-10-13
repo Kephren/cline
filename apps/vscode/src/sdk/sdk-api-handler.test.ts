@@ -118,4 +118,55 @@ describe("buildSdkProviderConfig", () => {
 		expect(providerConfig.providerId).toBe("ollama")
 		expect("timeoutMs" in providerConfig).toBe(false)
 	})
+
+	it("disables thinking for Ollama when ollamaReasoning is false even if actModeReasoningEffort is xhigh", () => {
+		mocks.providerSettingsManager.getProviderSettings.mockReturnValue(undefined)
+
+		const providerConfig = buildSdkProviderConfig(
+			{
+				actModeApiProvider: "ollama",
+				actModeOllamaModelId: "hf.co/unsloth/Devstral-Small-2507-GGUF:Q4_0",
+				actModeReasoningEffort: "xhigh",
+				ollamaReasoning: false,
+			},
+			"act",
+		)
+
+		expect(providerConfig.providerId).toBe("ollama")
+		expect(providerConfig.thinking).toBe(false)
+		expect("reasoningEffort" in providerConfig).toBe(false)
+	})
+
+	it("disables thinking for non-reasoning Ollama model when ollamaReasoning is undefined", () => {
+		mocks.providerSettingsManager.getProviderSettings.mockReturnValue(undefined)
+
+		const providerConfig = buildSdkProviderConfig(
+			{
+				actModeApiProvider: "ollama",
+				actModeOllamaModelId: "hf.co/unsloth/Devstral-Small-2507-GGUF:Q4_0",
+				actModeReasoningEffort: "xhigh",
+			},
+			"act",
+		)
+
+		expect(providerConfig.providerId).toBe("ollama")
+		expect(providerConfig.thinking).toBe(false)
+		expect("reasoningEffort" in providerConfig).toBe(false)
+	})
+
+	it("enables thinking for Ollama when ollamaReasoning is true", () => {
+		mocks.providerSettingsManager.getProviderSettings.mockReturnValue(undefined)
+
+		const providerConfig = buildSdkProviderConfig(
+			{
+				actModeApiProvider: "ollama",
+				actModeOllamaModelId: "hf.co/unsloth/Devstral-Small-2507-GGUF:Q4_0",
+				ollamaReasoning: true,
+			},
+			"act",
+		)
+
+		expect(providerConfig.providerId).toBe("ollama")
+		expect(providerConfig.thinking).toBe(true)
+	})
 })

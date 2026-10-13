@@ -219,6 +219,65 @@ function resolveProviderReasoningConfig(providerId: string): SessionReasoningCon
 	}
 }
 
+export function isOllamaReasoningModel(
+	modelId?: string,
+	modelInfo?: { supportsReasoning?: boolean },
+): boolean {
+	if (modelInfo?.supportsReasoning !== undefined) {
+		return modelInfo.supportsReasoning
+	}
+	if (!modelId) {
+		return false
+	}
+	const lower = modelId.toLowerCase()
+	return (
+		lower.includes("deepseek-r1") ||
+		lower.includes("deepseek-r") ||
+		lower.includes("qwq") ||
+		lower.includes("qwen3") ||
+		lower.includes("thinking") ||
+		lower.includes("reasoning") ||
+		/(^|[-_:])r1([-_:]|$)/i.test(lower)
+	)
+}
+
+export function resolveOllamaReasoningConfig(
+	apiConfig: ApiConfiguration | undefined,
+	modelId: string | undefined,
+	selection?: ResolvedModelSelection,
+): SessionReasoningConfig {
+	try {
+		const manager = getProviderSettingsManager(resolveDataDir())
+		const settings = manager.getProviderSettings("ollama")
+
+		// 1. Explicit UI toggle from apiConfig takes highest precedence
+		if (typeof apiConfig?.ollamaReasoning === "boolean") {
+			const enabled = apiConfig.ollamaReasoning
+			// Sync with providers.json if out of sync
+			if (settings && settings.reasoning?.enabled !== enabled) {
+				const sanitizedSettings: ProviderSettings = {
+					...settings,
+					reasoning: { ...settings.reasoning, enabled },
+				}
+				manager.saveProviderSettings(sanitizedSettings, { setLastUsed: false })
+			}
+			return { thinking: enabled }
+		}
+
+		// 2. Check settings in providers.json
+		if (typeof settings?.reasoning?.enabled === "boolean") {
+			return { thinking: settings.reasoning.enabled }
+		}
+
+		// 3. Fallback based on model heuristics
+		const isReasoning = isOllamaReasoningModel(modelId, selection?.modelInfo)
+		return { thinking: isReasoning }
+	} catch (error) {
+		Logger.warn("[SessionFactory] Ollama reasoning resolution failed:", error)
+		return { thinking: false }
+	}
+}
+
 function resolveOcaReasoningConfig(mode: Mode, apiConfig: ApiConfiguration | undefined): SessionReasoningConfig | undefined {
 	const rawEffort = mode === "plan" ? apiConfig?.planModeOcaReasoningEffort : apiConfig?.actModeOcaReasoningEffort
 	const effort = rawEffort?.trim().toLowerCase()
@@ -992,7 +1051,9 @@ export async function buildSessionConfig(input: SessionConfigInput): Promise<Cor
 	const reasoningConfig =
 		providerId === "oca"
 			? (resolveOcaReasoningConfig(mode, apiConfig) ?? resolveProviderReasoningConfig(providerId))
-			: resolveProviderReasoningConfig(providerId)
+			: providerId === "ollama"
+				? resolveOllamaReasoningConfig(apiConfig, modelId, committedRuntimeModel)
+				: resolveProviderReasoningConfig(providerId)
 
 	// Include rich workspace metadata so Cline API observability can extract
 	// git remotes and the latest commit hash from the system message.
