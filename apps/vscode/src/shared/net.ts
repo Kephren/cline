@@ -125,8 +125,17 @@ export const fetch: typeof globalThis.fetch = (() => {
 		baseFetch = undiciFetch as any as typeof globalThis.fetch
 	}
 
-	return ((input: string | URL | Request, init?: RequestInit): Promise<Response> =>
-		(mockFetch || baseFetch)(input, init)) as typeof globalThis.fetch
+	return ((input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+		let requestInit = init
+		const hasBody = Boolean(
+			requestInit?.body != null ||
+				(typeof Request !== "undefined" && input instanceof Request && input.body != null),
+		)
+		if (hasBody && (!requestInit || !("duplex" in requestInit))) {
+			requestInit = { ...requestInit, duplex: "half" } as RequestInit
+		}
+		return (mockFetch || baseFetch)(input, requestInit)
+	}) as typeof globalThis.fetch
 })()
 
 /**
@@ -178,11 +187,16 @@ export function getAxiosSettings(): {
 	fetch?: typeof globalThis.fetch
 	maxBodyLength?: number
 	maxContentLength?: number
+	fetchOptions?: { duplex?: "half" | "full" }
+	duplex?: "half" | "full"
 } {
 	return {
 		adapter: "fetch" as any,
 		fetch, // Use our configured fetch
+		fetchOptions: { duplex: "half" },
+		duplex: "half",
 		maxBodyLength: Number.POSITIVE_INFINITY,
 		maxContentLength: Number.POSITIVE_INFINITY,
 	}
 }
+

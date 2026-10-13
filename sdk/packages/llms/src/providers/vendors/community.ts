@@ -388,6 +388,8 @@ export async function createSapAiCoreProviderModule(
 			// Standard cline axios settings mirroring `getAxiosSettings()`
 			adapter: "fetch",
 			...(config.fetch ? { fetch: config.fetch } : {}),
+			fetchOptions: { duplex: "half" },
+			duplex: "half",
 			maxBodyLength: Number.POSITIVE_INFINITY,
 			maxContentLength: Number.POSITIVE_INFINITY,
 		},
