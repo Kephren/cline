@@ -247,10 +247,18 @@ export function resolveOllamaReasoningConfig(
 	selection?: ResolvedModelSelection,
 ): SessionReasoningConfig {
 	try {
+		// 1. Explicit per-model override or modelInfo takes highest precedence
+		if (typeof selection?.overrides?.supportsReasoning === "boolean") {
+			return { thinking: selection.overrides.supportsReasoning }
+		}
+		if (typeof selection?.modelInfo?.supportsReasoning === "boolean") {
+			return { thinking: selection.modelInfo.supportsReasoning }
+		}
+
 		const manager = getProviderSettingsManager(resolveDataDir())
 		const settings = manager.getProviderSettings("ollama")
 
-		// 1. Explicit UI toggle from apiConfig takes highest precedence
+		// 2. Explicit UI toggle from apiConfig
 		if (typeof apiConfig?.ollamaReasoning === "boolean") {
 			const enabled = apiConfig.ollamaReasoning
 			// Sync with providers.json if out of sync
@@ -759,14 +767,18 @@ export function resolveOllamaProviderConfig(
 	} catch {
 		Logger.warn("[SessionFactory] Failed to read Ollama settings from providers.json")
 	}
-	const overrideContextWindow = positiveFiniteNumber(selection?.overrides?.contextWindow)
+	const overrideContextWindow =
+		positiveFiniteNumber(selection?.overrides?.contextWindow) ??
+		positiveFiniteNumber(selection?.modelInfo?.contextWindow)
 	const raw = config.ollamaApiOptionsCtxNum?.trim()
 	const parsed = raw ? Number(raw) : Number.NaN
 	const legacyContextWindow = Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : undefined
 	const contextWindow = overrideContextWindow ?? settingsContextWindow ?? legacyContextWindow ?? OLLAMA_DEFAULT_CONTEXT_WINDOW
 	const timeoutMs = config.requestTimeoutMs
 
-	const overrideTemperature = positiveFiniteNumber(selection?.overrides?.temperature)
+	const overrideTemperature =
+		nonNegativeFiniteNumber(selection?.overrides?.temperature) ??
+		nonNegativeFiniteNumber(selection?.modelInfo?.temperature)
 	const temperature =
 		overrideTemperature ??
 		(typeof config.ollamaTemperature === "number" && config.ollamaTemperature >= 0 ? config.ollamaTemperature : undefined)
@@ -1047,7 +1059,9 @@ export async function buildSessionConfig(input: SessionConfigInput): Promise<Cor
 	const maxTokensPerTurn =
 		positiveFiniteNumber(overriddenMaxTokens) ??
 		(providerId === "openai" ? resolveOpenAiCompatibleMaxTokens(apiConfig, mode) : undefined)
-	const temperature = nonNegativeFiniteNumber(committedRuntimeModel?.overrides?.temperature) ?? 0.8
+	const temperature =
+		nonNegativeFiniteNumber(committedRuntimeModel?.overrides?.temperature) ??
+		(providerId === "ollama" ? ollamaProviderConfig?.modelInfo?.temperature : undefined)
 	const reasoningConfig =
 		providerId === "oca"
 			? (resolveOcaReasoningConfig(mode, apiConfig) ?? resolveProviderReasoningConfig(providerId))

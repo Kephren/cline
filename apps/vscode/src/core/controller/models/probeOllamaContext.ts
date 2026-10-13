@@ -3,6 +3,7 @@ import axios from "axios"
 import { parseProviderId } from "@/sdk/model-catalog/provider-id"
 import { getAxiosSettings } from "@/shared/net"
 import { Controller } from ".."
+import { findMatchingOllamaModel, isOllamaMemoryOrCapacityError, normalizeOllamaUrl } from "./ollamaUtils"
 
 interface OllamaPsModel {
 	name?: string
@@ -26,7 +27,7 @@ export async function probeOllamaContext(
 ): Promise<ProbeOllamaContextResponse> {
 	try {
 		let baseUrl = request.baseUrl?.trim()
-		const modelName = request.modelName
+		const modelName = request.modelName?.trim()
 		const contextWindow = request.contextWindow
 
 		if (!baseUrl && controller && typeof controller.getProviderConfigStore === "function") {
@@ -45,7 +46,8 @@ export async function probeOllamaContext(
 			})
 		}
 
-		if (!URL.canParse(baseUrl)) {
+		const normalizedBaseUrl = normalizeOllamaUrl(baseUrl)
+		if (!normalizedBaseUrl) {
 			return ProbeOllamaContextResponse.create({
 				success: false,
 				fitsOnGpu: false,
@@ -70,7 +72,7 @@ export async function probeOllamaContext(
 		// Probe Ollama by engaging the model API with the simplest prompt ("hi") and num_predict: 1.
 		// keep_alive: "5m" keeps the model in memory so /api/ps can inspect its VRAM allocation.
 		await axios.post(
-			`${baseUrl}/api/generate`,
+			`${normalizedBaseUrl}/api/generate`,
 			{
 				model: modelName,
 				prompt: "hi",
@@ -84,25 +86,22 @@ export async function probeOllamaContext(
 			},
 			{
 				...axiosConfig,
-				timeout: 45000,
+				timeout: 60000,
 			},
 		)
 
 		// Inspect memory distribution in /api/ps
-		const psResponse = await axios.get(`${baseUrl}/api/ps`, axiosConfig).catch(() => null)
-		const models: OllamaPsModel[] = psResponse?.data?.models || []
-		const normalize = (name?: string) =>
-			(name || "")
-				.trim()
-				.toLowerCase()
-				.replace(/:latest$/, "")
-		const target = normalize(modelName)
-		const activeModel =
-			models.find((m: OllamaPsModel) => {
-				const n = normalize(m.name)
-				const mod = normalize(m.model)
-				return n === target || mod === target || n.endsWith(`/${target}`) || mod.endsWith(`/${target}`)
-			}) || models[0]
+		const psResponse = await axios.get(`${normalizedBaseUrl}/api/ps`, axiosConfig).catch(() => null)
+		let models: OllamaPsModel[] = psResponse?.data?.models || []
+		let activeModel = findMatchingOllamaModel(models, modelName)
+
+		// Brief retry if /api/ps hasn't updated immediately
+		if (!activeModel && models.length === 0) {
+			await new Promise((r) => setTimeout(r, 200))
+			const retryPs = await axios.get(`${normalizedBaseUrl}/api/ps`, axiosConfig).catch(() => null)
+			models = retryPs?.data?.models || []
+			activeModel = findMatchingOllamaModel(models, modelName)
+		}
 
 		if (!activeModel) {
 			return ProbeOllamaContextResponse.create({
@@ -117,7 +116,7 @@ export async function probeOllamaContext(
 		const size = Number(activeModel.size || 0)
 		const sizeVram = Number(activeModel.size_vram || 0)
 		const fitsOnGpu = size > 0 && sizeVram > 0 && sizeVram >= size
-		const gpuPercent = size > 0 ? (fitsOnGpu ? 100 : Math.min(99, Math.floor((sizeVram / size) * 100))) : 100
+		const gpuPercent = size > 0 ? (fitsOnGpu ? 100 : Math.min(99, Math.floor((sizeVram / size) * 100))) : 0
 		const cpuPercent = 100 - gpuPercent
 
 		return ProbeOllamaContextResponse.create({
@@ -133,9 +132,10 @@ export async function probeOllamaContext(
 		const errData = axiosErr?.response?.data
 		const errMessage =
 			typeof errData === "string" ? errData : (errData as { error?: string })?.error || axiosErr?.message || ""
-		const isOom = /out of memory|cuda|vram|not enough space|allocation|too large/i.test(errMessage)
 
-		if (isOom) {
+		// If the error message indicates memory, VRAM, capacity exhaustion, or context limit,
+		// the context size exceeded GPU limits rather than a fatal communication breakdown.
+		if (isOllamaMemoryOrCapacityError(errMessage)) {
 			return ProbeOllamaContextResponse.create({
 				success: true,
 				fitsOnGpu: false,

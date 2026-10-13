@@ -57,6 +57,22 @@ describe("useProviderConfig", () => {
 		expect(result.current.config?.baseUrl).toBe("https://custom.example/v1")
 	})
 
+	it("read manually refetches and updates stored config", async () => {
+		vi.mocked(ModelsServiceClient.readProviderConfig)
+			.mockResolvedValueOnce(config("deepseek", "http://server1:11434"))
+			.mockResolvedValueOnce(config("deepseek", "http://server2:22434"))
+
+		const { result } = renderHook(() => useProviderConfig("deepseek"))
+		await waitFor(() => expect(result.current.config?.baseUrl).toBe("http://server1:11434"))
+
+		await act(async () => {
+			const updated = await result.current.read()
+			expect(updated?.baseUrl).toBe("http://server2:22434")
+		})
+
+		expect(result.current.config?.baseUrl).toBe("http://server2:22434")
+	})
+
 	it("commitSelection sends model settings and refreshes config", async () => {
 		vi.mocked(ModelsServiceClient.readProviderConfig)
 			.mockResolvedValueOnce(config())

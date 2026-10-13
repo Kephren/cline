@@ -3,6 +3,7 @@ import axios from "axios"
 import { parseProviderId } from "@/sdk/model-catalog/provider-id"
 import { getAxiosSettings } from "@/shared/net"
 import { Controller } from ".."
+import { normalizeOllamaUrl } from "./ollamaUtils"
 
 /**
  * Fetches available models from Ollama
@@ -19,11 +20,12 @@ export async function getOllamaModels(controller: Controller, request: StringReq
 			baseUrl = config?.baseUrl?.trim()
 		}
 
-		if (!baseUrl || !URL.canParse(baseUrl)) {
+		const normalizedBaseUrl = normalizeOllamaUrl(baseUrl)
+		if (!normalizedBaseUrl) {
 			return StringArray.create({ values: [] })
 		}
 
-		const response = await axios.get(`${baseUrl}/api/tags`, getAxiosSettings())
+		const response = await axios.get(`${normalizedBaseUrl}/api/tags`, getAxiosSettings())
 		const modelsArray = response.data?.models?.map((model: any) => model.name) || []
 		const models = [...new Set<string>(modelsArray)].sort()
 

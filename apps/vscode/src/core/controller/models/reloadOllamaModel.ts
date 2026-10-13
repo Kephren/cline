@@ -4,6 +4,7 @@ import axios from "axios"
 import { parseProviderId } from "@/sdk/model-catalog/provider-id"
 import { getAxiosSettings } from "@/shared/net"
 import { Controller } from ".."
+import { normalizeOllamaUrl } from "./ollamaUtils"
 
 /**
  * Reloads a model in Ollama by first unloading it (keep_alive: 0) and then
@@ -21,14 +22,15 @@ export async function reloadOllamaModel(controller: Controller, request: ReloadO
 			baseUrl = config?.baseUrl?.trim()
 		}
 
-		if (!baseUrl || !URL.canParse(baseUrl)) {
+		const normalizedBaseUrl = normalizeOllamaUrl(baseUrl)
+		if (!normalizedBaseUrl) {
 			return Empty.create({})
 		}
 
 		const axiosConfig = getAxiosSettings()
 
 		// Discover active models from /api/ps
-		const psResponse = await axios.get(`${baseUrl}/api/ps`, axiosConfig).catch(() => null)
+		const psResponse = await axios.get(`${normalizedBaseUrl}/api/ps`, axiosConfig).catch(() => null)
 		const runningModels: any[] = psResponse?.data?.models || []
 
 		const modelsToUnload = new Set<string>()
@@ -47,7 +49,7 @@ export async function reloadOllamaModel(controller: Controller, request: ReloadO
 		for (const model of modelsToUnload) {
 			await axios
 				.post(
-					`${baseUrl}/api/generate`,
+					`${normalizedBaseUrl}/api/generate`,
 					{
 						model,
 						keep_alive: 0,
@@ -62,7 +64,7 @@ export async function reloadOllamaModel(controller: Controller, request: ReloadO
 			const numCtx = request.contextWindow > 0 ? request.contextWindow : undefined
 			await axios
 				.post(
-					`${baseUrl}/api/generate`,
+					`${normalizedBaseUrl}/api/generate`,
 					{
 						model: request.modelName,
 						prompt: "",

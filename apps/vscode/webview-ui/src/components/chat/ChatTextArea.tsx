@@ -460,7 +460,7 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 		const [searchLoading, setSearchLoading] = useState(false)
 		const [, metaKeyChar] = useMetaKeyDetection(platform)
 		const { selectedProvider, selectedModelId, selectedModelInfo } = useNormalizedApiConfiguration(mode)
-		const { config: ollamaConfig } = useProviderConfig("ollama")
+		const { config: ollamaConfig, read: readOllamaConfig } = useProviderConfig("ollama")
 		// Images are attached regardless; when the selected model has no image input the thumbnails get a warning
 		// badge and a notice offers to switch models. Unknown capability data fails open, like core does.
 		const modelSupportsImages = selectedModelInfo.supportsImages !== false
@@ -477,6 +477,9 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 			if (typeof apiConfiguration?.ollamaReasoning === "boolean") {
 				return apiConfiguration.ollamaReasoning
 			}
+			if (typeof selectedModelInfo?.supportsReasoning === "boolean") {
+				return selectedModelInfo.supportsReasoning
+			}
 			return isOllamaReasoningModel(selectedModelId, selectedModelInfo)
 		})
 
@@ -484,33 +487,13 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 		useEffect(() => {
 			if (typeof apiConfiguration?.ollamaReasoning === "boolean") {
 				setThinkingEnabled(apiConfiguration.ollamaReasoning)
+			} else if (typeof selectedModelInfo?.supportsReasoning === "boolean") {
+				setThinkingEnabled(selectedModelInfo.supportsReasoning)
 			} else if (prevModelIdRef.current !== selectedModelId) {
 				prevModelIdRef.current = selectedModelId
 				setThinkingEnabled(isOllamaReasoningModel(selectedModelId, selectedModelInfo))
 			}
 		}, [apiConfiguration?.ollamaReasoning, selectedModelId, selectedModelInfo])
-
-		const handleReasoningToggle = useCallback(async () => {
-			const next = !thinkingEnabled
-			setThinkingEnabled(next)
-			void handleFieldChange("ollamaReasoning", next).catch((err) => {
-				console.error("Failed to update Ollama reasoning in config:", err)
-			})
-			try {
-				await ModelsServiceClient.writeProviderConfig(
-					WriteProviderConfigRequest.create({
-						providerId: "ollama",
-						patch: WriteProviderConfigPatch.create({
-							reasoning: {
-								enabled: next,
-							},
-						}),
-					}),
-				)
-			} catch (error) {
-				console.error("Failed to update Ollama reasoning setting:", error)
-			}
-		}, [thinkingEnabled, handleFieldChange])
 
 		// Fetch git commits when Git is selected or when typing a hash
 		useEffect(() => {
@@ -1393,7 +1376,15 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 			cpuPercent: 0,
 		})
 		const [isUnloadingOllama, setIsUnloadingOllama] = useState(false)
-		const ollamaBaseUrl = (ollamaConfig?.baseUrl ?? apiConfiguration?.ollamaBaseUrl)?.trim()
+
+		// Keep ollamaConfig in sync whenever apiConfiguration.ollamaBaseUrl changes
+		useEffect(() => {
+			if (selectedProvider === "ollama" && typeof readOllamaConfig === "function") {
+				void readOllamaConfig()
+			}
+		}, [selectedProvider, apiConfiguration?.ollamaBaseUrl, readOllamaConfig])
+
+		const ollamaBaseUrl = (apiConfiguration?.ollamaBaseUrl || ollamaConfig?.baseUrl || "")?.trim()
 
 		const [ollamaModelDetails, setOllamaModelDetails] = useState<OllamaModelDetailsResponse | null>(null)
 		const [isLoadingModelDetails, setIsLoadingModelDetails] = useState(false)
@@ -1539,28 +1530,32 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 			}
 		}, [selectedProvider, selectedModelId, ollamaBaseUrl, hasConfiguredContext])
 
-		const requestOllamaStatus = useCallback(async () => {
-			if (selectedProvider !== "ollama" || !ollamaBaseUrl) return
-			try {
-				const res = await ModelsServiceClient.getOllamaModelStatus(
-					StringRequest.create({
-						value: ollamaBaseUrl,
-					}),
-				)
-				if (res) {
-					setOllamaStatus({
-						isRunning: res.isRunning,
-						modelName: res.modelName,
-						size: res.size,
-						sizeVram: res.sizeVram,
-						gpuPercent: res.gpuPercent,
-						cpuPercent: res.cpuPercent,
-					})
+		const requestOllamaStatus = useCallback(
+			async (overrideUrl?: string) => {
+				const targetUrl = (overrideUrl || ollamaBaseUrl)?.trim()
+				if (selectedProvider !== "ollama" || !targetUrl) return
+				try {
+					const res = await ModelsServiceClient.getOllamaModelStatus(
+						StringRequest.create({
+							value: targetUrl,
+						}),
+					)
+					if (res) {
+						setOllamaStatus({
+							isRunning: res.isRunning,
+							modelName: res.modelName,
+							size: res.size,
+							sizeVram: res.sizeVram,
+							gpuPercent: res.gpuPercent,
+							cpuPercent: res.cpuPercent,
+						})
+					}
+				} catch (error) {
+					console.error("Failed to fetch Ollama model status in ChatTextArea:", error)
 				}
-			} catch (error) {
-				console.error("Failed to fetch Ollama model status in ChatTextArea:", error)
-			}
-		}, [selectedProvider, ollamaBaseUrl])
+			},
+			[selectedProvider, ollamaBaseUrl],
+		)
 
 		const handleUnloadOllamaModel = useCallback(async () => {
 			if (selectedProvider !== "ollama" || !ollamaBaseUrl) return
@@ -1596,25 +1591,85 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 			}
 		}, [selectedProvider, ollamaBaseUrl, requestOllamaStatus])
 
+		const handleOllamaModelSelect = useCallback(
+			async (newModelId: string) => {
+				if (!newModelId) return
+				try {
+					await ModelsServiceClient.commitModelSelection(
+						CommitModelSelectionRequest.create({
+							providerId: "ollama",
+							mode,
+							modelId: newModelId,
+						}),
+					)
+
+					try {
+						const details = await ModelsServiceClient.getOllamaModelDetails(
+							OllamaModelDetailsRequest.create({
+								baseUrl: ollamaBaseUrl || "",
+								modelName: newModelId,
+							}),
+						)
+						if (details) {
+							setOllamaModelDetails(details)
+							lastAppliedModelRef.current = newModelId
+						}
+					} catch (e) {
+						console.error("Failed to fetch Ollama model details on select:", e)
+					}
+				} catch (error) {
+					console.error("Failed to commit Ollama model selection:", error)
+				}
+			},
+			[mode, ollamaBaseUrl],
+		)
+
 		const requestOllamaModels = useCallback(async () => {
-			if (selectedProvider !== "ollama" || !ollamaBaseUrl) return
+			if (selectedProvider !== "ollama") return
 			setIsRefreshingOllama(true)
 			try {
+				// Re-read latest provider config so any URL changes in Settings are immediately fresh
+				const freshConfig =
+					typeof readOllamaConfig === "function" ? await readOllamaConfig().catch(() => null) : null
+				const targetBaseUrl = (
+					apiConfiguration?.ollamaBaseUrl ||
+					freshConfig?.baseUrl ||
+					ollamaConfig?.baseUrl ||
+					""
+				)?.trim()
+
+				if (!targetBaseUrl) {
+					setOllamaModels([])
+					return
+				}
+
 				const response = await ModelsServiceClient.getOllamaModels(
 					StringRequest.create({
-						value: ollamaBaseUrl,
+						value: targetBaseUrl,
 					}),
 				)
 				if (response?.values) {
 					setOllamaModels(response.values)
+					// If currently selected model does not exist on the refreshed server, auto-select the first available model
+					if (response.values.length > 0 && selectedModelId && !response.values.includes(selectedModelId)) {
+						handleOllamaModelSelect(response.values[0])
+					}
 				}
-				void requestOllamaStatus()
+				void requestOllamaStatus(targetBaseUrl)
 			} catch (error) {
 				console.error("Failed to fetch Ollama models in ChatTextArea:", error)
 			} finally {
 				setIsRefreshingOllama(false)
 			}
-		}, [selectedProvider, ollamaBaseUrl, requestOllamaStatus])
+		}, [
+			selectedProvider,
+			readOllamaConfig,
+			apiConfiguration?.ollamaBaseUrl,
+			ollamaConfig?.baseUrl,
+			selectedModelId,
+			handleOllamaModelSelect,
+			requestOllamaStatus,
+		])
 
 		useEffect(() => {
 			if (selectedProvider === "ollama" && ollamaBaseUrl) {
@@ -1627,7 +1682,7 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 			[selectedModelId, ollamaStatus.modelName, ollamaModels],
 		)
 
-		// Persisted Model Context Window from config (source of truth is providers.json / ollamaConfig, mirrored to ollamaApiOptionsCtxNum)
+		// Persisted Model Context Window from config (source of truth is per-model ollamaApiOptionsCtxNum)
 		const ollamaModelContextWindow = useMemo(() => {
 			if (selectedProvider !== "ollama") return undefined
 
@@ -1643,18 +1698,13 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 				return apiConfiguration.ollamaTunedContextSize
 			}
 
-			// 2. Check providers.json (authoritative store for Model Context Window setting)
-			if (typeof ollamaConfig?.contextWindow === "number" && ollamaConfig.contextWindow > 0) {
-				return ollamaConfig.contextWindow
-			}
-
-			// 3. Check legacy / mirrored state key (ollamaApiOptionsCtxNum)
+			// 2. Check per-model active state key (ollamaApiOptionsCtxNum)
 			const ctxNum = Number.parseInt(apiConfiguration?.ollamaApiOptionsCtxNum || "", 10)
 			if (Number.isFinite(ctxNum) && ctxNum > 0) {
 				return ctxNum
 			}
 
-			// 4. Fallback to ollamaTunedContextSize only if explicitly tuned
+			// 3. Fallback to ollamaTunedContextSize only if explicitly tuned
 			if (
 				Boolean(apiConfiguration?.ollamaIsTuned) &&
 				typeof apiConfiguration?.ollamaTunedContextSize === "number" &&
@@ -1670,7 +1720,6 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 			apiConfiguration?.ollamaTunedContextSize,
 			apiConfiguration?.ollamaTunedModel,
 			effectiveOllamaModel,
-			ollamaConfig?.contextWindow,
 			apiConfiguration?.ollamaApiOptionsCtxNum,
 		])
 
@@ -1709,22 +1758,22 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 		const modelTemp = selectedModelInfo?.temperature
 		const configTemp = apiConfiguration?.ollamaTemperature
 		const [temperature, setTemperature] = useState<number>(() => {
-			if (typeof configTemp === "number" && Number.isFinite(configTemp)) {
-				return Math.max(0, Math.min(2, configTemp))
-			}
 			if (typeof modelTemp === "number" && Number.isFinite(modelTemp)) {
 				return Math.max(0, Math.min(2, modelTemp))
+			}
+			if (typeof configTemp === "number" && Number.isFinite(configTemp)) {
+				return Math.max(0, Math.min(2, configTemp))
 			}
 			return 0.8
 		})
 
 		useEffect(() => {
-			if (typeof apiConfiguration?.ollamaTemperature === "number" && Number.isFinite(apiConfiguration.ollamaTemperature)) {
-				setTemperature(Math.max(0, Math.min(2, apiConfiguration.ollamaTemperature)))
-			} else if (typeof modelTemp === "number" && Number.isFinite(modelTemp)) {
+			if (typeof modelTemp === "number" && Number.isFinite(modelTemp)) {
 				setTemperature(Math.max(0, Math.min(2, modelTemp)))
+			} else if (typeof apiConfiguration?.ollamaTemperature === "number" && Number.isFinite(apiConfiguration.ollamaTemperature)) {
+				setTemperature(Math.max(0, Math.min(2, apiConfiguration.ollamaTemperature)))
 			}
-		}, [apiConfiguration?.ollamaTemperature, modelTemp])
+		}, [modelTemp, apiConfiguration?.ollamaTemperature])
 
 		const handleTemperatureSelect = useCallback(
 			async (newTemp: number) => {
@@ -1735,16 +1784,18 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 						console.error("Failed to persist ollamaTemperature:", err)
 					})
 				}
-				if (!selectedModelId) return
+				const targetModelId = selectedModelId || effectiveOllamaModel
+				if (!targetModelId) return
 				try {
 					await ModelsServiceClient.commitModelSelection(
 						CommitModelSelectionRequest.create({
 							providerId: selectedProvider,
 							mode,
-							modelId: selectedModelId,
+							modelId: targetModelId,
 							overrides: toProtobufModelOverrides({
 								contextWindow: contextSize,
 								temperature: clamped,
+								...(typeof thinkingEnabled === "boolean" ? { supportsReasoning: thinkingEnabled } : {}),
 							}),
 						}),
 					)
@@ -1752,7 +1803,7 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 					console.error("Failed to commit temperature override:", error)
 				}
 			},
-			[selectedProvider, mode, selectedModelId, contextSize, handleFieldChange],
+			[selectedProvider, mode, selectedModelId, effectiveOllamaModel, contextSize, thinkingEnabled, handleFieldChange],
 		)
 
 		const handleTemperatureStep = useCallback(
@@ -1763,69 +1814,10 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 			[temperature, handleTemperatureSelect],
 		)
 
-		const handleOllamaModelSelect = useCallback(
-			async (newModelId: string) => {
-				if (!newModelId) return
-				try {
-					let newContextSize = contextSize
-					try {
-						const details = await ModelsServiceClient.getOllamaModelDetails(
-							OllamaModelDetailsRequest.create({
-								baseUrl: ollamaBaseUrl || "",
-								modelName: newModelId,
-							}),
-						)
-						if (details) {
-							setOllamaModelDetails(details)
-							const nativeLen = Number(details.contextLength)
-							if (nativeLen > 0) {
-								newContextSize = nativeLen
-								setContextSize(nativeLen)
-								lastAppliedModelRef.current = newModelId
-							}
-						}
-					} catch (e) {
-						console.error("Failed to fetch Ollama model details on select:", e)
-					}
-
-					await ModelsServiceClient.commitModelSelection(
-						CommitModelSelectionRequest.create({
-							providerId: "ollama",
-							mode,
-							modelId: newModelId,
-							overrides: toProtobufModelOverrides({
-								contextWindow: newContextSize,
-								temperature,
-							}),
-						}),
-					)
-				} catch (error) {
-					console.error("Failed to commit Ollama model selection:", error)
-				}
-			},
-			[mode, contextSize, temperature, ollamaBaseUrl],
-		)
-
-
 		const handleContextSizeSelect = useCallback(
 			async (newSize: number) => {
 				const clamped = findNearestContextSize(newSize)
 				setContextSize(clamped)
-
-				if (selectedProvider === "ollama") {
-					try {
-						await ModelsServiceClient.writeProviderConfig(
-							WriteProviderConfigRequest.create({
-								providerId: "ollama",
-								patch: WriteProviderConfigPatch.create({
-									contextWindow: clamped,
-								}),
-							}),
-						)
-					} catch (error) {
-						console.error("Failed to update Ollama context window config:", error)
-					}
-				}
 
 				const targetModelId = selectedModelId || effectiveOllamaModel
 				if (targetModelId) {
@@ -1838,6 +1830,7 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 								overrides: toProtobufModelOverrides({
 									contextWindow: clamped,
 									temperature,
+									...(typeof thinkingEnabled === "boolean" ? { supportsReasoning: thinkingEnabled } : {}),
 								}),
 							}),
 						)
@@ -1846,8 +1839,49 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 					}
 				}
 			},
-			[selectedProvider, selectedModelId, effectiveOllamaModel, mode, temperature],
+			[selectedProvider, selectedModelId, effectiveOllamaModel, mode, temperature, thinkingEnabled],
 		)
+
+		const handleReasoningToggle = useCallback(async () => {
+			const next = !thinkingEnabled
+			setThinkingEnabled(next)
+			void handleFieldChange("ollamaReasoning", next).catch((err) => {
+				console.error("Failed to update Ollama reasoning in config:", err)
+			})
+			try {
+				await ModelsServiceClient.writeProviderConfig(
+					WriteProviderConfigRequest.create({
+						providerId: "ollama",
+						patch: WriteProviderConfigPatch.create({
+							reasoning: {
+								enabled: next,
+							},
+						}),
+					}),
+				)
+			} catch (error) {
+				console.error("Failed to update Ollama reasoning setting:", error)
+			}
+			const targetModelId = selectedModelId || effectiveOllamaModel
+			if (targetModelId) {
+				try {
+					await ModelsServiceClient.commitModelSelection(
+						CommitModelSelectionRequest.create({
+							providerId: selectedProvider,
+							mode,
+							modelId: targetModelId,
+							overrides: toProtobufModelOverrides({
+								contextWindow: contextSize,
+								temperature,
+								supportsReasoning: next,
+							}),
+						}),
+					)
+				} catch (error) {
+					console.error("Failed to commit reasoning override:", error)
+				}
+			}
+		}, [thinkingEnabled, selectedModelId, effectiveOllamaModel, selectedProvider, mode, contextSize, temperature, handleFieldChange])
 
 		const sliderIndex = useMemo(() => {
 			return findClosestContextSizeIndex(contextSize || 32768)

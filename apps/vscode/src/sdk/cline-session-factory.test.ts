@@ -17,6 +17,8 @@ import {
 	normalizeSdkBaseUrl,
 	resolveApiKey,
 	resolveAzureProviderConfig,
+	resolveOllamaProviderConfig,
+	resolveOllamaReasoningConfig,
 	updateHistoryItem,
 } from "./cline-session-factory"
 import { parseProviderId } from "./model-catalog/provider-id"
@@ -1612,5 +1614,43 @@ describe("updateHistoryItem", () => {
 		expect(result).toHaveLength(2)
 		expect(result[0].id).toBe("task-new")
 		expect(result[1].id).toBe("task-old")
+	})
+
+	describe("resolveOllamaReasoningConfig & resolveOllamaProviderConfig per-model overrides", () => {
+		it("honors selection overrides for reasoning ahead of global provider settings", () => {
+			const selection = {
+				providerId: parseProviderId("ollama"),
+				modelId: "devstral:latest",
+				overrides: { supportsReasoning: false },
+				modelInfo: { name: "devstral:latest", supportsPromptCache: false },
+				modelInfoSource: "state" as const,
+			}
+			const result = resolveOllamaReasoningConfig(undefined, "devstral:latest", selection)
+			expect(result).toEqual({ thinking: false })
+		})
+
+		it("honors modelInfo supportsReasoning when override is not set", () => {
+			const selection = {
+				providerId: parseProviderId("ollama"),
+				modelId: "r1-model",
+				modelInfo: { name: "r1-model", supportsReasoning: true, supportsPromptCache: false },
+				modelInfoSource: "state" as const,
+			}
+			const result = resolveOllamaReasoningConfig(undefined, "r1-model", selection)
+			expect(result).toEqual({ thinking: true })
+		})
+
+		it("honors per-model contextWindow and temperature overrides in resolveOllamaProviderConfig", () => {
+			const selection = {
+				providerId: parseProviderId("ollama"),
+				modelId: "devstral:latest",
+				overrides: { contextWindow: 32768, temperature: 0.5 },
+				modelInfo: { name: "devstral:latest", supportsPromptCache: false },
+				modelInfoSource: "state" as const,
+			}
+			const result = resolveOllamaProviderConfig({} as any, "devstral:latest", selection)
+			expect(result.modelInfo?.contextWindow).toBe(32768)
+			expect(result.modelInfo?.temperature).toBe(0.5)
+		})
 	})
 })

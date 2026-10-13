@@ -491,6 +491,45 @@ describe("provider model catalog handlers", () => {
 		expect(stateManager.flushPendingState).toHaveBeenCalledTimes(1)
 	})
 
+	it("commitModelSelection updates Ollama state with resolved model contextWindow, temperature, and supportsReasoning", async () => {
+		const { commitModelSelection } = await import("../commitModelSelection")
+		const providerId = parseProviderId("ollama")
+		const store = makeStore({ providerId })
+		vi.mocked(store.readSelection).mockReturnValue({
+			providerId,
+			modelId: "devstral:latest",
+			modelInfo: {
+				name: "devstral:latest",
+				contextWindow: 32768,
+				temperature: 0.5,
+				supportsReasoning: false,
+				supportsPromptCache: false,
+			},
+			modelInfoSource: "state",
+		})
+		const stateManager: TestStateManager = {
+			setGlobalStateBatch: vi.fn(),
+			flushPendingState: vi.fn(async () => undefined),
+		}
+		const controller = makeController(store, makeCatalog(), stateManager)
+
+		await commitModelSelection(controller, {
+			providerId: "ollama",
+			mode: "act",
+			modelId: "devstral:latest",
+		})
+
+		expect(stateManager.setGlobalStateBatch).toHaveBeenCalledWith(
+			expect.objectContaining({
+				actModeApiProvider: "ollama",
+				actModeOllamaModelId: "devstral:latest",
+				ollamaApiOptionsCtxNum: "32768",
+				ollamaTemperature: 0.5,
+				ollamaReasoning: false,
+			}),
+		)
+	})
+
 	it("commitModelSelection rejects invalid mode", async () => {
 		const { commitModelSelection } = await import("../commitModelSelection")
 		const providerId = parseProviderId("deepseek")

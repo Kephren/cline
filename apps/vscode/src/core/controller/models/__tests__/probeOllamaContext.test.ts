@@ -181,4 +181,36 @@ describe("probeOllamaContext", () => {
 		expect(res.success).toBe(true)
 		expect(axiosPost.firstCall.args[0]).toBe("http://remote-ollama:11434/api/generate")
 	})
+
+	it("normalizes malformed base URL (e.g. http:192.168.80.170:22434)", async () => {
+		axiosPost.resolves({ data: {} })
+		axiosGet.resolves({
+			data: {
+				models: [{ name: "mannix/Bonsai-2-27B:latest", size: 5000, size_vram: 5000 }],
+			},
+		})
+
+		const req = ProbeOllamaContextRequest.create({
+			baseUrl: "http:192.168.80.170:22434",
+			modelName: "mannix/Bonsai-2-27B:latest",
+			contextWindow: 16384,
+		})
+		const res = await probeOllamaContext(mockController, req)
+		expect(res.success).toBe(true)
+		expect(axiosPost.firstCall.args[0]).toBe("http://192.168.80.170:22434/api/generate")
+	})
+
+	it("handles Ollama system memory and runner termination capacity errors as fitsOnGpu false", async () => {
+		axiosPost.rejects(new Error("model requires more system memory (25.8 GiB) than is available (14.2 GiB)"))
+
+		const req = ProbeOllamaContextRequest.create({
+			baseUrl: "http://192.168.80.170:22434",
+			modelName: "mannix/Bonsai-2-27B:latest",
+			contextWindow: 262144,
+		})
+		const res = await probeOllamaContext(mockController, req)
+		expect(res.success).toBe(true)
+		expect(res.fitsOnGpu).toBe(false)
+		expect(res.gpuPercent).toBe(0)
+	})
 })

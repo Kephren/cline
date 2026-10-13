@@ -4,6 +4,7 @@ import axios from "axios"
 import { parseProviderId } from "@/sdk/model-catalog/provider-id"
 import { getAxiosSettings } from "@/shared/net"
 import { Controller } from ".."
+import { normalizeOllamaUrl } from "./ollamaUtils"
 
 /**
  * Unloads running model(s) from Ollama memory/VRAM by setting keep_alive: 0
@@ -20,14 +21,15 @@ export async function unloadOllamaModel(controller: Controller, request: UnloadO
 			baseUrl = config?.baseUrl?.trim()
 		}
 
-		if (!baseUrl || !URL.canParse(baseUrl)) {
+		const normalizedBaseUrl = normalizeOllamaUrl(baseUrl)
+		if (!normalizedBaseUrl) {
 			return Empty.create({})
 		}
 
 		const axiosConfig = getAxiosSettings()
 
 		// Discover active models from /api/ps
-		const psResponse = await axios.get(`${baseUrl}/api/ps`, axiosConfig).catch(() => null)
+		const psResponse = await axios.get(`${normalizedBaseUrl}/api/ps`, axiosConfig).catch(() => null)
 		const runningModels: any[] = psResponse?.data?.models || []
 
 		const modelsToUnload = new Set<string>()
@@ -46,7 +48,7 @@ export async function unloadOllamaModel(controller: Controller, request: UnloadO
 		for (const model of modelsToUnload) {
 			await axios
 				.post(
-					`${baseUrl}/api/generate`,
+					`${normalizedBaseUrl}/api/generate`,
 					{
 						model,
 						keep_alive: 0,

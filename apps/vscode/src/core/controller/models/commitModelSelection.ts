@@ -28,13 +28,30 @@ export async function commitModelSelection(
 		controller.getProviderConfigStore().commitSelection(providerId, mode, selection)
 	}
 
+	const resolved = controller.getProviderConfigStore().readSelection(providerId, mode)
+
 	if (hasProviderCatalogStateController(controller)) {
 		const updates: Record<string, any> = {
 			[`${mode}ModeApiProvider`]: toLegacyApiProvider(providerId.toString()),
 			[getProviderModelIdKey(toLegacyApiProvider(providerId.toString()), mode)]: selection.modelId,
 		}
-		if (providerId.toString() === "ollama" && selection.overrides?.contextWindow) {
-			updates.ollamaApiOptionsCtxNum = String(selection.overrides.contextWindow)
+		if (providerId.toString() === "ollama") {
+			const ctx = resolved?.modelInfo?.contextWindow ?? selection.overrides?.contextWindow
+			if (typeof ctx === "number" && ctx > 0) {
+				updates.ollamaApiOptionsCtxNum = String(ctx)
+			}
+			const temp = resolved?.modelInfo?.temperature ?? selection.overrides?.temperature
+			if (typeof temp === "number" && Number.isFinite(temp)) {
+				updates.ollamaTemperature = temp
+			} else {
+				updates.ollamaTemperature = undefined
+			}
+			const reasoning = resolved?.modelInfo?.supportsReasoning ?? selection.overrides?.supportsReasoning
+			if (typeof reasoning === "boolean") {
+				updates.ollamaReasoning = reasoning
+			} else {
+				updates.ollamaReasoning = undefined
+			}
 		}
 		controller.stateManager.setGlobalStateBatch(updates)
 		await controller.stateManager.flushPendingState?.()

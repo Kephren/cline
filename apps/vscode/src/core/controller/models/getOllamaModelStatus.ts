@@ -4,6 +4,7 @@ import axios from "axios"
 import { parseProviderId } from "@/sdk/model-catalog/provider-id"
 import { getAxiosSettings } from "@/shared/net"
 import { Controller } from ".."
+import { normalizeOllamaUrl } from "./ollamaUtils"
 
 /**
  * Fetches running model status from Ollama (/api/ps)
@@ -20,11 +21,12 @@ export async function getOllamaModelStatus(controller: Controller, request: Stri
 			baseUrl = config?.baseUrl?.trim()
 		}
 
-		if (!baseUrl || !URL.canParse(baseUrl)) {
+		const normalizedBaseUrl = normalizeOllamaUrl(baseUrl)
+		if (!normalizedBaseUrl) {
 			return OllamaModelStatusResponse.create({ isRunning: false })
 		}
 
-		const response = await axios.get(`${baseUrl}/api/ps`, getAxiosSettings())
+		const response = await axios.get(`${normalizedBaseUrl}/api/ps`, getAxiosSettings())
 		const models = response.data?.models || []
 		if (models.length === 0) {
 			return OllamaModelStatusResponse.create({ isRunning: false })
@@ -34,7 +36,7 @@ export async function getOllamaModelStatus(controller: Controller, request: Stri
 		const size = Number(activeModel.size || 0)
 		const sizeVram = Number(activeModel.size_vram || 0)
 
-		const gpuPercent = size > 0 ? (sizeVram >= size ? 100 : Math.min(99, Math.floor((sizeVram / size) * 100))) : 100
+		const gpuPercent = size > 0 ? (sizeVram >= size ? 100 : Math.min(99, Math.floor((sizeVram / size) * 100))) : 0
 		const cpuPercent = 100 - gpuPercent
 
 		return OllamaModelStatusResponse.create({

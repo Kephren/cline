@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
 	writeProviderConfig: vi.fn(async () => ({})),
 	probeOllamaContext: vi.fn(async () => ({ success: true, fitsOnGpu: true, gpuPercent: 100 })),
 	updateApiConfigurationProto: vi.fn(async () => ({})),
+	getOllamaModels: vi.fn(async () => ({ values: [] })),
 	apiConfiguration: {} as Record<string, unknown>,
 	providerConfig: undefined as Record<string, unknown> | undefined,
 	navigateToSettingsModelPicker: vi.fn(),
@@ -59,7 +60,7 @@ vi.mock("@/services/grpc-client", () => ({
 	},
 	ModelsServiceClient: {
 		getOllamaModelStatus: vi.fn(async () => ({})),
-		getOllamaModels: vi.fn(async () => ({ values: [] })),
+		getOllamaModels: (...args: unknown[]) => mocks.getOllamaModels(...args),
 		getOllamaModelDetails: vi.fn(async () => mocks.ollamaModelDetails ?? {}),
 		commitModelSelection: (...args: unknown[]) => mocks.commitModelSelection(...args),
 		writeProviderConfig: (...args: unknown[]) => mocks.writeProviderConfig(...args),
@@ -1202,6 +1203,28 @@ describe("ChatTextArea Ollama settings persistence", () => {
 		const thumb = await screen.findByRole("slider")
 		expect(thumb).toHaveAttribute("aria-valuenow", "14")
 		expect(screen.getByTestId("context-size-value")).toHaveTextContent("8K")
+	})
+
+	it("refreshes Ollama models with updated base URL when refresh button is clicked", async () => {
+		mocks.selectedProvider = "ollama"
+		mocks.selectedModelId = "llama3:latest"
+		mocks.apiConfiguration = { ollamaBaseUrl: "http://192.168.80.170:22434" }
+		mocks.getOllamaModels.mockResolvedValueOnce({
+			values: ["mannix/Bonsai-2-27B:latest", "llama3:latest"],
+		})
+
+		renderTextArea()
+
+		const refreshButton = await screen.findByTestId("refresh-ollama-models")
+		await act(async () => {
+			fireEvent.click(refreshButton)
+		})
+
+		expect(mocks.getOllamaModels).toHaveBeenCalledWith(
+			expect.objectContaining({
+				value: "http://192.168.80.170:22434",
+			}),
+		)
 	})
 
 	describe("findLargestFittingContextSize", () => {
