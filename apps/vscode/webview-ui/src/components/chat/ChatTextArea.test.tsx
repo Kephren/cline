@@ -870,6 +870,31 @@ describe("ChatTextArea Ollama settings persistence", () => {
 		expect(input.value).toBe("1.4")
 	})
 
+	it("prioritizes persisted apiConfiguration.ollamaTemperature over modelInfo.temperature", () => {
+		mocks.selectedModelInfo = {
+			contextWindow: 32768,
+			temperature: 0.2,
+		}
+		mocks.apiConfiguration = {
+			ollamaTemperature: 1.4,
+		}
+
+		renderTextArea()
+		const input = screen.getByTestId("temperature-input") as HTMLInputElement
+		expect(input.value).toBe("1.4")
+	})
+
+	it("defaults temperature to 0.8 when not previously set", () => {
+		mocks.selectedModelInfo = {
+			contextWindow: 32768,
+		}
+		mocks.apiConfiguration = {}
+
+		renderTextArea()
+		const input = screen.getByTestId("temperature-input") as HTMLInputElement
+		expect(input.value).toBe("0.8")
+	})
+
 	it("persists temperature changes to apiConfiguration", async () => {
 		renderTextArea()
 		const incrementBtn = screen.getByTestId("temperature-increment")

@@ -1758,22 +1758,24 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 		const modelTemp = selectedModelInfo?.temperature
 		const configTemp = apiConfiguration?.ollamaTemperature
 		const [temperature, setTemperature] = useState<number>(() => {
-			if (typeof modelTemp === "number" && Number.isFinite(modelTemp)) {
-				return Math.max(0, Math.min(2, modelTemp))
-			}
 			if (typeof configTemp === "number" && Number.isFinite(configTemp)) {
 				return Math.max(0, Math.min(2, configTemp))
+			}
+			if (typeof modelTemp === "number" && Number.isFinite(modelTemp)) {
+				return Math.max(0, Math.min(2, modelTemp))
 			}
 			return 0.8
 		})
 
 		useEffect(() => {
-			if (typeof modelTemp === "number" && Number.isFinite(modelTemp)) {
-				setTemperature(Math.max(0, Math.min(2, modelTemp)))
-			} else if (typeof apiConfiguration?.ollamaTemperature === "number" && Number.isFinite(apiConfiguration.ollamaTemperature)) {
+			if (typeof apiConfiguration?.ollamaTemperature === "number" && Number.isFinite(apiConfiguration.ollamaTemperature)) {
 				setTemperature(Math.max(0, Math.min(2, apiConfiguration.ollamaTemperature)))
+			} else if (typeof modelTemp === "number" && Number.isFinite(modelTemp)) {
+				setTemperature(Math.max(0, Math.min(2, modelTemp)))
+			} else {
+				setTemperature(0.8)
 			}
-		}, [modelTemp, apiConfiguration?.ollamaTemperature])
+		}, [apiConfiguration?.ollamaTemperature, modelTemp])
 
 		const handleTemperatureSelect = useCallback(
 			async (newTemp: number) => {

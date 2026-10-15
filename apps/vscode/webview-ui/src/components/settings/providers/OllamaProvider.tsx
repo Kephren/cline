@@ -215,9 +215,13 @@ export const OllamaProvider = ({ showModelOptions, isPopup, currentMode }: Ollam
 								: "0.8"
 						}
 						onChange={(value) => {
+							if (value.trim() === "") {
+								void handleFieldChange("ollamaTemperature", undefined)
+								return
+							}
 							const numValue = Number.parseFloat(value)
 							if (!Number.isNaN(numValue) && numValue >= 0 && numValue <= 2) {
-								handleFieldChange("ollamaTemperature", Math.round(numValue * 10) / 10)
+								void handleFieldChange("ollamaTemperature", Math.round(numValue * 10) / 10)
 							}
 						}}
 						placeholder="Default: 0.8"

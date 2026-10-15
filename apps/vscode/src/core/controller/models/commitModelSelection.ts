@@ -36,17 +36,17 @@ export async function commitModelSelection(
 			[getProviderModelIdKey(toLegacyApiProvider(providerId.toString()), mode)]: selection.modelId,
 		}
 		if (providerId.toString() === "ollama") {
-			const ctx = resolved?.modelInfo?.contextWindow ?? selection.overrides?.contextWindow
+			const ctx = selection.overrides?.contextWindow ?? resolved?.modelInfo?.contextWindow
 			if (typeof ctx === "number" && ctx > 0) {
 				updates.ollamaApiOptionsCtxNum = String(ctx)
 			}
-			const temp = resolved?.modelInfo?.temperature ?? selection.overrides?.temperature
+			const temp = selection.overrides?.temperature ?? resolved?.modelInfo?.temperature
 			if (typeof temp === "number" && Number.isFinite(temp)) {
 				updates.ollamaTemperature = temp
 			} else {
 				updates.ollamaTemperature = undefined
 			}
-			const reasoning = resolved?.modelInfo?.supportsReasoning ?? selection.overrides?.supportsReasoning
+			const reasoning = selection.overrides?.supportsReasoning ?? resolved?.modelInfo?.supportsReasoning
 			if (typeof reasoning === "boolean") {
 				updates.ollamaReasoning = reasoning
 			} else {
