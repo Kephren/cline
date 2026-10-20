@@ -250,7 +250,7 @@ describe("ChatTextArea context size adjustment", () => {
 		mocks.navigateToSettingsModelPicker.mockReset()
 	})
 
-	it("renders context size slider with 42 increments and context size label", () => {
+	it("renders context size slider with 60 increments and context size label", () => {
 		renderTextArea()
 
 		const slider = screen.getByTestId("context-size-slider")
@@ -260,8 +260,8 @@ describe("ChatTextArea context size adjustment", () => {
 		const thumb = screen.getByRole("slider")
 		expect(thumb).toBeInTheDocument()
 		expect(thumb).toHaveAttribute("aria-valuemin", "0")
-		expect(thumb).toHaveAttribute("aria-valuemax", "42")
-		expect(thumb).toHaveAttribute("aria-valuenow", "22") // 32K is index 22 out of 42
+		expect(thumb).toHaveAttribute("aria-valuemax", "60")
+		expect(thumb).toHaveAttribute("aria-valuenow", "22") // 32K is index 22 out of 60
 
 		const label = screen.getByTestId("context-size-value")
 		expect(label).toBeInTheDocument()
@@ -282,7 +282,7 @@ describe("ChatTextArea context size adjustment", () => {
 		expect(mocks.commitModelSelection).toHaveBeenCalledWith(
 			expect.objectContaining({
 				overrides: expect.objectContaining({
-					contextWindow: 40960,
+					contextWindow: 36864,
 				}),
 			}),
 		)
@@ -316,12 +316,12 @@ describe("ChatTextArea context size adjustment", () => {
 		expect(label).toHaveTextContent("512")
 	})
 
-	it("renders at maximum position (index 42) for 1048576 / 1024K", () => {
+	it("renders at maximum position (index 60) for 1048576 / 1024K", () => {
 		mocks.selectedModelInfo = { contextWindow: 1048576 }
 		renderTextArea()
 
 		const thumb = screen.getByRole("slider")
-		expect(thumb).toHaveAttribute("aria-valuenow", "42")
+		expect(thumb).toHaveAttribute("aria-valuenow", "60")
 
 		const label = screen.getByTestId("context-size-value")
 		expect(label).toHaveTextContent("1024K")
@@ -409,8 +409,8 @@ describe("ChatTextArea context size adjustment", () => {
 			)
 		})
 
-		// 131072 is index 30 in CONTEXT_SIZES
-		expect(thumb).toHaveAttribute("aria-valuenow", "30")
+		// 131072 is index 46 in CONTEXT_SIZES
+		expect(thumb).toHaveAttribute("aria-valuenow", "46")
 		expect(screen.getByTestId("context-size-value")).toHaveTextContent("128K")
 	})
 })
@@ -619,7 +619,9 @@ describe("ChatTextArea Ollama Phase 2 sampling controls & verbose layout", () =>
 		mocks.selectedProvider = "ollama"
 		mocks.selectedModelId = "llama3:latest"
 		mocks.ollamaModelDetails = undefined
-		localStorage.clear()
+		if (typeof localStorage !== "undefined" && typeof localStorage.clear === "function") {
+			localStorage.clear()
+		}
 	})
 
 	it("renders verbose labels for Context, Temperature, and GPU status", () => {
@@ -1021,8 +1023,8 @@ describe("ChatTextArea Ollama settings persistence", () => {
 		const tunedIndicator = screen.getByTestId("slider-tuned-indicator")
 		expect(tunedIndicator).toBeInTheDocument()
 		expect(tunedIndicator).toHaveClass("bg-emerald-500")
-		// 16384 is index 18 of 42
-		expect(tunedIndicator).toHaveStyle({ left: `${(18 / 42) * 100}%` })
+		// 16384 is index 18 of 60
+		expect(tunedIndicator).toHaveStyle({ left: `${(18 / 60) * 100}%` })
 	})
 
 	it("snaps context slider to nearest config value on initial load", () => {
@@ -1056,7 +1058,7 @@ describe("ChatTextArea Ollama settings persistence", () => {
 
 		const tunedIndicator = screen.getByTestId("slider-tuned-indicator")
 		expect(tunedIndicator).toBeInTheDocument()
-		expect(tunedIndicator).toHaveStyle({ left: `${(18 / 42) * 100}%` })
+		expect(tunedIndicator).toHaveStyle({ left: `${(18 / 60) * 100}%` })
 	})
 
 	it("preserves green tuned marker when user adjusts slider and allows 1-click snap back", async () => {
@@ -1082,7 +1084,7 @@ describe("ChatTextArea Ollama settings persistence", () => {
 
 		// Green marker is STILL rendered at 16K to discourage adjusting and guide user back
 		expect(screen.getByTestId("slider-tuned-indicator")).toBeInTheDocument()
-		expect(screen.getByTestId("slider-tuned-indicator")).toHaveStyle({ left: `${(18 / 42) * 100}%` })
+		expect(screen.getByTestId("slider-tuned-indicator")).toHaveStyle({ left: `${(18 / 60) * 100}%` })
 
 		// Button shows idle Tune since context was moved away
 		const autotuneBtn = screen.getByTestId("ollama-autotune-button")
@@ -1186,7 +1188,7 @@ describe("ChatTextArea Ollama settings persistence", () => {
 		// Green tuned indicator is at 16K (index 18)
 		const tunedIndicator = screen.getByTestId("slider-tuned-indicator")
 		expect(tunedIndicator).toBeInTheDocument()
-		expect(tunedIndicator).toHaveStyle({ left: `${(18 / 42) * 100}%` })
+		expect(tunedIndicator).toHaveStyle({ left: `${(18 / 60) * 100}%` })
 
 		// Ideal indicator is removed
 		expect(screen.queryByTestId("slider-ideal-indicator")).not.toBeInTheDocument()
@@ -1261,6 +1263,8 @@ describe("ChatTextArea Ollama settings persistence", () => {
 			expect(findLargestFittingContextSize(24576)).toBe(24576)
 			expect(findLargestFittingContextSize(30000)).toBe(28672)
 			expect(findLargestFittingContextSize(32768)).toBe(32768)
+			expect(findLargestFittingContextSize(90112)).toBe(90112)
+			expect(findLargestFittingContextSize(110592)).toBe(110592)
 		})
 	})
 })
