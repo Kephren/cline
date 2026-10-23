@@ -265,15 +265,15 @@ export function getLatestInferenceTelemetry(
 	return null
 }
 
-const SwitchContainer = styled.div<{ disabled: boolean }>`
+const SwitchContainer = styled.div<{ disabled?: boolean }>`
+	opacity: ${(props) => (props.disabled ? 0.5 : 1)};
 	display: flex;
 	align-items: center;
 	background-color: transparent;
 	border: 1px solid var(--vscode-input-border);
 	border-radius: 12px;
 	overflow: hidden;
-	cursor: ${(props) => (props.disabled ? "not-allowed" : "pointer")};
-	opacity: ${(props) => (props.disabled ? 0.5 : 1)};
+	cursor: pointer;
 	transform: scale(1);
 	transform-origin: right center;
 	margin-left: 0;
@@ -413,7 +413,7 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 		ref,
 	) => {
 		const {
-			mode,
+			mode: selectedMode,
 			apiConfiguration,
 			openRouterModels,
 			platform,
@@ -423,11 +423,22 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 			remoteConfigSettings,
 			navigateToSettingsModelPicker,
 			mcpServers,
-			clineMessages,
+			clineMessages = [],
 			didHydrateState,
+			cloudSessionsEnabled,
+			cloudTaskTarget,
+			currentCloudTask,
+			cloudModelId,
 		} = useExtensionState()
 
 		const latestTelemetry = useMemo(() => getLatestInferenceTelemetry(clineMessages), [clineMessages])
+
+		// Cloud sessions are Act-only (like the desktop app and the cloud dashboard).
+		// While a cloud task is shown, or a new task is about to run in the cloud,
+		// the mode is pinned to Act and the toggle is hidden; the stored mode is untouched.
+		const cloudActOnly =
+			!!currentCloudTask || (clineMessages.length === 0 && !!cloudSessionsEnabled && cloudTaskTarget?.target === "cloud")
+		const mode = cloudActOnly ? "act" : selectedMode
 		const [isTextAreaFocused, setIsTextAreaFocused] = useState(false)
 		const [isDraggingOver, setIsDraggingOver] = useState(false)
 		const [gitCommits, setGitCommits] = useState<GitCommit[]>([])
@@ -1260,6 +1271,9 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 		)
 
 		const onModeToggle = useCallback(() => {
+			if (cloudActOnly) {
+				return
+			}
 			void (async () => {
 				const convertedProtoMode = mode === "plan" ? PlanActMode.ACT : PlanActMode.PLAN
 				const submittedText = inputValue
@@ -1312,7 +1326,7 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 					textAreaRef.current?.focus()
 				}, 100)
 			})()
-		}, [mode, inputValue, selectedImages, selectedFiles, setInputValue, setSelectedImages, setSelectedFiles])
+		}, [cloudActOnly, mode, inputValue, selectedImages, selectedFiles, setInputValue, setSelectedImages, setSelectedFiles])
 
 		useShortcut(usePlatform().togglePlanActKeys, onModeToggle, { disableTextInputs: false }) // important that we don't disable the text input here
 
@@ -2530,6 +2544,11 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 			} = getModeSpecificFields(apiConfiguration, mode)
 			const unknownModel = "unknown"
 
+			// A cloud task runs on a Cline model in the sandbox, whatever the
+			// local provider is; the extension reports which one.
+			if (cloudActOnly) {
+				return `cline:${cloudModelId || unknownModel}`
+			}
 			if (!apiConfiguration) {
 				return unknownModel
 			}
@@ -2563,7 +2582,7 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 				default:
 					return `${selectedProvider || "model"}:${selectedModelId || "..."}`
 			}
-		}, [apiConfiguration, mode, selectedProvider, selectedModelId, didHydrateState])
+		}, [apiConfiguration, mode, selectedProvider, selectedModelId, didHydrateState, cloudActOnly, cloudModelId])
 
 		// Function to show error message for unsupported files for drag and drop
 		const showUnsupportedFileErrorMessage = () => {
@@ -4092,37 +4111,38 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 						</ButtonGroup>
 					</div>
 					<div className="flex items-center gap-2 shrink-0">
-						{/* Tooltip for Plan/Act toggle remains outside the conditional rendering */}
-						<Tooltip>
-							<TooltipContent
-								className="text-xs px-2 flex flex-col gap-1"
-								hidden={shownTooltipMode === null}
-								side="top">
-								{`In ${shownTooltipMode === "act" ? "Act" : "Plan"}  mode, Cline will ${shownTooltipMode === "act" ? "complete the task immediately" : "gather information to architect a plan"}`}
-								<p className="text-description/80 text-xs mb-0">
-									Toggle w/ <kbd className="text-muted-foreground mx-1">{togglePlanActKeys}</kbd>
-								</p>
-							</TooltipContent>
-							<TooltipTrigger>
-								<SwitchContainer data-testid="mode-switch" disabled={false} onClick={onModeToggle}>
-									<Slider isAct={mode === "act"} isPlan={mode === "plan"} />
-									{["Plan", "Act"].map((m) => (
-										<div
-											aria-checked={mode === m.toLowerCase()}
-											className={cn(
-												"pt-0.5 pb-px px-2 z-10 text-xs w-1/2 text-center bg-transparent",
-												mode === m.toLowerCase() ? "text-white" : "text-input-foreground",
-											)}
-											key={m}
-											onMouseLeave={() => setShownTooltipMode(null)}
-											onMouseOver={() => setShownTooltipMode(m.toLowerCase() === "plan" ? "plan" : "act")}
-											role="switch">
-											{m}
-										</div>
-									))}
-								</SwitchContainer>
-							</TooltipTrigger>
-						</Tooltip>
+						{!cloudActOnly && (
+							<Tooltip>
+								<TooltipContent
+									className="text-xs px-2 flex flex-col gap-1"
+									hidden={shownTooltipMode === null}
+									side="top">
+									{`In ${shownTooltipMode === "act" ? "Act" : "Plan"}  mode, Cline will ${shownTooltipMode === "act" ? "complete the task immediately" : "gather information to architect a plan"}`}
+									<p className="text-description/80 text-xs mb-0">
+										Toggle w/ <kbd className="text-muted-foreground mx-1">{togglePlanActKeys}</kbd>
+									</p>
+								</TooltipContent>
+								<TooltipTrigger>
+									<SwitchContainer data-testid="mode-switch" onClick={onModeToggle}>
+										<Slider isAct={mode === "act"} isPlan={mode === "plan"} />
+										{["Plan", "Act"].map((m) => (
+											<div
+												aria-checked={mode === m.toLowerCase()}
+												className={cn(
+													"pt-0.5 pb-px px-2 z-10 text-xs w-1/2 text-center bg-transparent",
+													mode === m.toLowerCase() ? "text-white" : "text-input-foreground",
+												)}
+												key={m}
+												onMouseLeave={() => setShownTooltipMode(null)}
+												onMouseOver={() => setShownTooltipMode(m.toLowerCase() === "plan" ? "plan" : "act")}
+												role="switch">
+												{m}
+											</div>
+										))}
+									</SwitchContainer>
+								</TooltipTrigger>
+							</Tooltip>
+						)}
 
 						{/* Telemetry tokens per second label placed to the right of Plan / Action toggle */}
 						{latestTelemetry ? (
