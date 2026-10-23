@@ -82,7 +82,7 @@ index aafa72c4167302af45db22e41a227cbaf02f792f..091d1a62fd4f40c1ed9f72f846969244
                  content: formatOllamaToolResultOutput(toolResponse.output)
                });
                break;
-@@ -961,14 +978,15 @@ var ollamaProviderOptions = import_v45.z
+@@ -945,14 +962,15 @@ var ollamaProviderOptions = import_v45.z
    think: import_v45.z.boolean().optional(),
    options: import_v45.z.object({
      num_ctx: import_v45.z.number().optional(),
@@ -183,7 +183,7 @@ index 5aa396bef7354dcd523cfeabc69fe7d8ada7d4c6..77e695b555d4772d0e8de3c0df247b1f
                  content: formatOllamaToolResultOutput(toolResponse.output)
                });
                break;
-@@ -965,14 +982,15 @@ var ollamaProviderOptions = z5.object({
+@@ -949,14 +966,15 @@ var ollamaProviderOptions = z5.object({
    think: z5.boolean().optional(),
    options: z5.object({
      num_ctx: z5.number().optional(),
