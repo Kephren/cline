@@ -8,6 +8,7 @@ import {
 	isKimiK26Family as isKimiK26FamilyFact,
 	isMiniMaxM3Model,
 	isMoonshotKimiModelIdFallback,
+	modelReasoningDefaultsOn,
 	providerReasoningRouteMatches,
 	resolveModelFamily,
 } from "../model-facts";
@@ -94,6 +95,27 @@ function resolveFamilyThinkingType(
 		return "disabled";
 	}
 	return defaultWhenUnset;
+}
+
+function isOllamaThinkingCapable(input: ProviderOptionMatchInput): boolean {
+	return (
+		input.target === "ollama" &&
+		(input.context.model.capabilities?.includes("reasoning") === true ||
+			modelReasoningDefaultsOn({
+				request: input.request,
+				context: input.context,
+			}))
+	);
+}
+
+function resolveOllamaThink(
+	input: ProviderOptionMatchInput,
+): boolean | undefined {
+	const explicitlyEnabled = input.request.reasoning?.enabled;
+	if (typeof explicitlyEnabled === "boolean") {
+		return explicitlyEnabled;
+	}
+	return isOllamaThinkingCapable(input) ? true : undefined;
 }
 
 function buildReasoningPatchForProvider(
@@ -534,12 +556,11 @@ const ollamaNativeOptionsRule: ProviderOptionRule = {
 			nativeOptions.num_gpu = Math.floor(numGpu);
 		}
 
+		const think = resolveOllamaThink(input);
 		const bucketOptions: Record<string, unknown> = {
 			options: nativeOptions,
+			...(think === undefined ? {} : { think }),
 		};
-		if (typeof input.request.reasoning?.enabled === "boolean") {
-			bucketOptions.think = input.request.reasoning.enabled;
-		}
 		return {
 			ollama: bucketOptions,
 		};

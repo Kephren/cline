@@ -126,6 +126,7 @@ function makeRequest(overrides: RequestOverrides): GatewayStreamRequest {
 		reasoning: overrides.reasoning,
 		signal: overrides.signal,
 		tools: overrides.tools,
+		metadata: overrides.metadata,
 	};
 }
 
@@ -330,12 +331,6 @@ function runCases(cases: ReadonlyArray<Case>) {
 					expect(bucket).not.toHaveProperty(key);
 				}
 			}
-			return;
-		}
-		if (request.providerId === "ollama") {
-			expect(result.ollama).toHaveProperty("options.num_ctx");
-			expect(result.ollama).toHaveProperty("options.num_batch", 512);
-			expect(result.ollama).not.toHaveProperty("think");
 			return;
 		}
 		if (
