@@ -88,6 +88,12 @@ message ReloadOllamaModelRequest {
   optional string base_url = 1;
   optional string model_name = 2;
   int32 context_window = 3;
+  optional int32 num_gpu = 4;
+  optional int32 num_predict = 5;
+  optional string keep_alive = 6;
+  optional double top_p = 7;
+  optional int32 top_k = 8;
+  optional double repeat_penalty = 9;
 }
 
 // Status of active/loaded model in Ollama (/api/ps)
@@ -521,6 +527,9 @@ message ModelsApiOptions {
   optional bool ollama_is_tuned = 50;
   optional int64 ollama_tuned_context_size = 51;
   optional string ollama_tuned_model = 52;
+  optional double ollama_top_p = 53;
+  optional int64 ollama_top_k = 54;
+  optional double ollama_repeat_penalty = 55;
 
   // Plan mode configurations
   optional string plan_mode_api_provider = 100;
@@ -842,6 +851,10 @@ message ModelsApiConfiguration {
   optional bool ollama_is_tuned = 93;
   optional int64 ollama_tuned_context_size = 94;
   optional string ollama_tuned_model = 95;
+  optional int64 ollama_num_predict = 96;
+  optional int64 ollama_num_gpu = 97;
+  optional double ollama_top_p = 98;
+  optional int64 ollama_top_k = 99;
 
   // Plan mode configurations
   optional string plan_mode_api_provider = 100;
@@ -934,4 +947,5 @@ message ModelsApiConfiguration {
   optional OpenRouterModelInfo act_mode_cline_model_info = 241;
   optional string act_mode_cline_pass_model_id = 242;
   optional OpenRouterModelInfo act_mode_cline_pass_model_info = 243;
+  optional double ollama_repeat_penalty = 244;
 }

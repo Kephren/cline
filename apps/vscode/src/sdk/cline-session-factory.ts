@@ -739,6 +739,8 @@ type OllamaProviderConfig = {
 		temperature?: number
 		minP?: number
 		seed?: number
+		numPredict?: number
+		numGpu?: number
 	}
 	timeoutMs?: number
 }
@@ -783,7 +785,21 @@ export function resolveOllamaProviderConfig(
 		overrideTemperature ??
 		(typeof config.ollamaTemperature === "number" && config.ollamaTemperature >= 0 ? config.ollamaTemperature : undefined)
 	const minP = typeof config.ollamaMinP === "number" && config.ollamaMinP > 0 ? config.ollamaMinP : undefined
+	const topP = typeof config.ollamaTopP === "number" && config.ollamaTopP > 0 ? config.ollamaTopP : undefined
+	const topK = typeof config.ollamaTopK === "number" && config.ollamaTopK >= 0 ? config.ollamaTopK : undefined
+	const repeatPenalty =
+		typeof config.ollamaRepeatPenalty === "number" && config.ollamaRepeatPenalty > 0
+			? config.ollamaRepeatPenalty
+			: undefined
 	const seed = config.ollamaSeedEnabled && typeof config.ollamaSeedValue === "number" ? config.ollamaSeedValue : undefined
+	const numPredict =
+		typeof config.ollamaNumPredict === "number" && Number.isFinite(config.ollamaNumPredict)
+			? config.ollamaNumPredict
+			: undefined
+	const numGpu =
+		typeof config.ollamaNumGpu === "number" && Number.isFinite(config.ollamaNumGpu) && config.ollamaNumGpu >= 0
+			? config.ollamaNumGpu
+			: undefined
 
 	return {
 		...(typeof timeoutMs === "number" && timeoutMs > 0 ? { timeoutMs } : {}),
@@ -795,7 +811,12 @@ export function resolveOllamaProviderConfig(
 						contextWindow,
 						...(temperature !== undefined ? { temperature } : {}),
 						...(minP !== undefined ? { minP } : {}),
+						...(topP !== undefined ? { topP } : {}),
+						...(topK !== undefined ? { topK } : {}),
+						...(repeatPenalty !== undefined ? { repeatPenalty } : {}),
 						...(seed !== undefined ? { seed } : {}),
+						...(numPredict !== undefined ? { numPredict } : {}),
+						...(numGpu !== undefined ? { numGpu } : {}),
 					},
 				}
 			: {}),

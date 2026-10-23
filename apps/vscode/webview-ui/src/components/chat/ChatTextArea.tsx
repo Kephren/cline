@@ -6,6 +6,7 @@ import {
 	OllamaModelDetailsRequest,
 	type OllamaModelDetailsResponse,
 	ProbeOllamaContextRequest,
+	ReloadOllamaModelRequest,
 	UnloadOllamaModelRequest,
 	WriteProviderConfigPatch,
 	WriteProviderConfigRequest,
@@ -29,6 +30,7 @@ import {
 	PlusIcon,
 	PowerOffIcon,
 	RefreshCwIcon,
+	RotateCcwIcon,
 	SlidersHorizontalIcon,
 	SparklesIcon,
 	ThermometerIcon,
@@ -1479,6 +1481,224 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 			})
 		}, [handleFieldChange])
 
+		const [topP, setTopP] = useState<number>(() => {
+			if (typeof apiConfiguration?.ollamaTopP === "number" && Number.isFinite(apiConfiguration.ollamaTopP)) {
+				return Math.max(0, Math.min(1, apiConfiguration.ollamaTopP))
+			}
+			try {
+				const p = localStorage.getItem("cline:ollama:topP")
+				return p ? Number.parseFloat(p) : 0.9
+			} catch {
+				return 0.9
+			}
+		})
+
+		const [topK, setTopK] = useState<number>(() => {
+			if (typeof apiConfiguration?.ollamaTopK === "number" && Number.isFinite(apiConfiguration.ollamaTopK)) {
+				return Math.max(0, apiConfiguration.ollamaTopK)
+			}
+			try {
+				const k = localStorage.getItem("cline:ollama:topK")
+				return k ? Number.parseInt(k, 10) : 40
+			} catch {
+				return 40
+			}
+		})
+
+		useEffect(() => {
+			if (typeof apiConfiguration?.ollamaTopP === "number" && Number.isFinite(apiConfiguration.ollamaTopP)) {
+				setTopP(Math.max(0, Math.min(1, apiConfiguration.ollamaTopP)))
+			}
+		}, [apiConfiguration?.ollamaTopP])
+
+		useEffect(() => {
+			if (typeof apiConfiguration?.ollamaTopK === "number" && Number.isFinite(apiConfiguration.ollamaTopK)) {
+				setTopK(Math.max(0, apiConfiguration.ollamaTopK))
+			}
+		}, [apiConfiguration?.ollamaTopK])
+
+		const handleTopPStep = useCallback((step: number) => {
+			setTopP((prev) => {
+				const next = Math.max(0, Math.min(1, Math.round((prev + step) * 100) / 100))
+				try {
+					localStorage.setItem("cline:ollama:topP", String(next))
+				} catch {}
+				void handleFieldChange("ollamaTopP", next).catch((err) => {
+					console.error("Failed to persist ollamaTopP:", err)
+				})
+				return next
+			})
+		}, [handleFieldChange])
+
+		const handleTopPChange = useCallback((val: number) => {
+			const clamped = Math.max(0, Math.min(1, Math.round(val * 100) / 100))
+			setTopP(clamped)
+			try {
+				localStorage.setItem("cline:ollama:topP", String(clamped))
+			} catch {}
+			void handleFieldChange("ollamaTopP", clamped).catch((err) => {
+				console.error("Failed to persist ollamaTopP:", err)
+			})
+		}, [handleFieldChange])
+
+		const handleTopKStep = useCallback((step: number) => {
+			setTopK((prev) => {
+				const next = Math.max(0, Math.min(200, prev + step))
+				try {
+					localStorage.setItem("cline:ollama:topK", String(next))
+				} catch {}
+				void handleFieldChange("ollamaTopK", next).catch((err) => {
+					console.error("Failed to persist ollamaTopK:", err)
+				})
+				return next
+			})
+		}, [handleFieldChange])
+
+		const handleTopKChange = useCallback((val: number) => {
+			const clamped = Math.max(0, Math.min(200, val))
+			setTopK(clamped)
+			try {
+				localStorage.setItem("cline:ollama:topK", String(clamped))
+			} catch {}
+			void handleFieldChange("ollamaTopK", clamped).catch((err) => {
+				console.error("Failed to persist ollamaTopK:", err)
+			})
+		}, [handleFieldChange])
+
+		const [repeatPenalty, setRepeatPenalty] = useState<number>(() => {
+			if (typeof apiConfiguration?.ollamaRepeatPenalty === "number" && Number.isFinite(apiConfiguration.ollamaRepeatPenalty)) {
+				return Math.max(0, Math.min(2, apiConfiguration.ollamaRepeatPenalty))
+			}
+			try {
+				const r = localStorage.getItem("cline:ollama:repeatPenalty")
+				return r ? Number.parseFloat(r) : 1.1
+			} catch {
+				return 1.1
+			}
+		})
+
+		useEffect(() => {
+			if (typeof apiConfiguration?.ollamaRepeatPenalty === "number" && Number.isFinite(apiConfiguration.ollamaRepeatPenalty)) {
+				setRepeatPenalty(Math.max(0, Math.min(2, apiConfiguration.ollamaRepeatPenalty)))
+			}
+		}, [apiConfiguration?.ollamaRepeatPenalty])
+
+		const handleRepeatPenaltyStep = useCallback((step: number) => {
+			setRepeatPenalty((prev) => {
+				const next = Math.max(0, Math.min(2, Math.round((prev + step) * 100) / 100))
+				try {
+					localStorage.setItem("cline:ollama:repeatPenalty", String(next))
+				} catch {}
+				void handleFieldChange("ollamaRepeatPenalty", next).catch((err) => {
+					console.error("Failed to persist ollamaRepeatPenalty:", err)
+				})
+				return next
+			})
+		}, [handleFieldChange])
+
+		const handleRepeatPenaltyChange = useCallback((val: number) => {
+			const clamped = Math.max(0, Math.min(2, Math.round(val * 100) / 100))
+			setRepeatPenalty(clamped)
+			try {
+				localStorage.setItem("cline:ollama:repeatPenalty", String(clamped))
+			} catch {}
+			void handleFieldChange("ollamaRepeatPenalty", clamped).catch((err) => {
+				console.error("Failed to persist ollamaRepeatPenalty:", err)
+			})
+		}, [handleFieldChange])
+
+		// Runtime model options: max generation tokens (num_predict) & GPU offload layers (num_gpu)
+		const [numPredict, setNumPredict] = useState<number>(() => {
+			if (typeof apiConfiguration?.ollamaNumPredict === "number" && Number.isFinite(apiConfiguration.ollamaNumPredict)) {
+				return apiConfiguration.ollamaNumPredict
+			}
+			try {
+				const val = localStorage.getItem("cline:ollama:numPredict")
+				return val ? Number.parseInt(val, 10) : 128
+			} catch {
+				return 128
+			}
+		})
+
+		const [numGpu, setNumGpu] = useState<number>(() => {
+			if (typeof apiConfiguration?.ollamaNumGpu === "number" && Number.isFinite(apiConfiguration.ollamaNumGpu)) {
+				return Math.max(0, Math.min(99, apiConfiguration.ollamaNumGpu))
+			}
+			try {
+				const val = localStorage.getItem("cline:ollama:numGpu")
+				return val ? Number.parseInt(val, 10) : 99
+			} catch {
+				return 99
+			}
+		})
+
+		const [fullGpu, setFullGpu] = useState<boolean>(() => {
+			if (typeof apiConfiguration?.ollamaNumGpu === "number") {
+				return apiConfiguration.ollamaNumGpu >= 99
+			}
+			try {
+				const val = localStorage.getItem("cline:ollama:fullGpu")
+				return val === null ? true : val === "true"
+			} catch {
+				return true
+			}
+		})
+
+		const [isPreloadingOllama, setIsPreloadingOllama] = useState(false)
+		const [preloadOllamaStatus, setPreloadOllamaStatus] = useState<string | null>(null)
+
+		useEffect(() => {
+			if (typeof apiConfiguration?.ollamaNumPredict === "number" && Number.isFinite(apiConfiguration.ollamaNumPredict)) {
+				setNumPredict(apiConfiguration.ollamaNumPredict)
+			}
+		}, [apiConfiguration?.ollamaNumPredict])
+
+		useEffect(() => {
+			if (typeof apiConfiguration?.ollamaNumGpu === "number" && Number.isFinite(apiConfiguration.ollamaNumGpu)) {
+				setNumGpu(apiConfiguration.ollamaNumGpu)
+				setFullGpu(apiConfiguration.ollamaNumGpu >= 99)
+			}
+		}, [apiConfiguration?.ollamaNumGpu])
+
+		const handleNumPredictChange = useCallback((val: number) => {
+			setNumPredict(val)
+			try {
+				localStorage.setItem("cline:ollama:numPredict", String(val))
+			} catch {}
+			void handleFieldChange("ollamaNumPredict", val).catch((err) => {
+				console.error("Failed to persist ollamaNumPredict:", err)
+			})
+		}, [handleFieldChange])
+
+		const handleNumGpuChange = useCallback((val: number) => {
+			const clamped = Math.max(0, Math.min(99, val))
+			setNumGpu(clamped)
+			setFullGpu(clamped >= 99)
+			try {
+				localStorage.setItem("cline:ollama:numGpu", String(clamped))
+				localStorage.setItem("cline:ollama:fullGpu", String(clamped >= 99))
+			} catch {}
+			void handleFieldChange("ollamaNumGpu", clamped).catch((err) => {
+				console.error("Failed to persist ollamaNumGpu:", err)
+			})
+		}, [handleFieldChange])
+
+		const handleFullGpuToggle = useCallback(() => {
+			setFullGpu((prev) => {
+				const next = !prev
+				const nextNumGpu = next ? 99 : 0
+				setNumGpu(nextNumGpu)
+				try {
+					localStorage.setItem("cline:ollama:fullGpu", String(next))
+					localStorage.setItem("cline:ollama:numGpu", String(nextNumGpu))
+				} catch {}
+				void handleFieldChange("ollamaNumGpu", nextNumGpu).catch((err) => {
+					console.error("Failed to persist ollamaNumGpu:", err)
+				})
+				return next
+			})
+		}, [handleFieldChange])
+
 		const isFirstModelLoadRef = useRef(true)
 		const lastAppliedModelRef = useRef<string | undefined>(selectedModelId)
 
@@ -2191,6 +2411,108 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 			requestOllamaStatus,
 			handleFieldsChange,
 		])
+
+		const handlePreloadOllamaModel = useCallback(async () => {
+			const targetModel = (ollamaStatus.modelName || effectiveOllamaModel || selectedModelId)?.trim()
+			if (selectedProvider !== "ollama" || !ollamaBaseUrl || !targetModel) return
+			setIsPreloadingOllama(true)
+			setPreloadOllamaStatus(null)
+			try {
+				await ModelsServiceClient.reloadOllamaModel(
+					ReloadOllamaModelRequest.create({
+						baseUrl: ollamaBaseUrl,
+						modelName: targetModel,
+						contextWindow: contextSize > 0 ? contextSize : 0,
+						numGpu: fullGpu ? 99 : numGpu,
+						numPredict: numPredict,
+						keepAlive: "10m",
+						topP: typeof topP === "number" && topP > 0 ? topP : undefined,
+						topK: typeof topK === "number" && topK >= 0 ? topK : undefined,
+						repeatPenalty: typeof repeatPenalty === "number" && repeatPenalty > 0 ? repeatPenalty : undefined,
+					}),
+				)
+				setPreloadOllamaStatus("Preloaded")
+				await requestOllamaStatus()
+				setTimeout(() => setPreloadOllamaStatus(null), 3000)
+			} catch (err) {
+				console.error("Failed to preload Ollama model in ChatTextArea:", err)
+				setPreloadOllamaStatus("Failed")
+				setTimeout(() => setPreloadOllamaStatus(null), 3000)
+			} finally {
+				setIsPreloadingOllama(false)
+			}
+		}, [
+			selectedProvider,
+			ollamaBaseUrl,
+			ollamaStatus.modelName,
+			effectiveOllamaModel,
+			selectedModelId,
+			contextSize,
+			fullGpu,
+			numGpu,
+			numPredict,
+			topP,
+			topK,
+			repeatPenalty,
+			requestOllamaStatus,
+		])
+
+		const handleResetDefaults = useCallback(() => {
+			const defaultTemp = 0.8
+			const defaultMinP = 0.0
+			const defaultTopP = 0.9
+			const defaultTopK = 40
+			const defaultRepeatPenalty = 1.1
+			const defaultNumPredict = 128
+			const defaultNumGpu = 99
+			const defaultFullGpu = true
+			const defaultSeedEnabled = false
+			const defaultSeedValue = 42
+			const defaultThinking =
+				typeof selectedModelInfo?.supportsReasoning === "boolean"
+					? selectedModelInfo.supportsReasoning
+					: isOllamaReasoningModel(selectedModelId, selectedModelInfo)
+
+			setTemperature(defaultTemp)
+			setMinP(defaultMinP)
+			setTopP(defaultTopP)
+			setTopK(defaultTopK)
+			setRepeatPenalty(defaultRepeatPenalty)
+			setNumPredict(defaultNumPredict)
+			setNumGpu(defaultNumGpu)
+			setFullGpu(defaultFullGpu)
+			setSeedEnabled(defaultSeedEnabled)
+			setSeedValue(defaultSeedValue)
+			setThinkingEnabled(defaultThinking)
+
+			try {
+				localStorage.setItem("cline:ollama:temperature", String(defaultTemp))
+				localStorage.setItem("cline:ollama:minP", String(defaultMinP))
+				localStorage.setItem("cline:ollama:topP", String(defaultTopP))
+				localStorage.setItem("cline:ollama:topK", String(defaultTopK))
+				localStorage.setItem("cline:ollama:repeatPenalty", String(defaultRepeatPenalty))
+				localStorage.setItem("cline:ollama:numPredict", String(defaultNumPredict))
+				localStorage.setItem("cline:ollama:numGpu", String(defaultNumGpu))
+				localStorage.setItem("cline:ollama:fullGpu", String(defaultFullGpu))
+				localStorage.setItem("cline:ollama:seedEnabled", String(defaultSeedEnabled))
+				localStorage.setItem("cline:ollama:seedValue", String(defaultSeedValue))
+			} catch {}
+
+			void handleFieldsChange({
+				ollamaTemperature: defaultTemp,
+				ollamaMinP: defaultMinP,
+				ollamaTopP: defaultTopP,
+				ollamaTopK: defaultTopK,
+				ollamaRepeatPenalty: defaultRepeatPenalty,
+				ollamaNumPredict: defaultNumPredict,
+				ollamaNumGpu: defaultNumGpu,
+				ollamaSeedEnabled: defaultSeedEnabled,
+				ollamaSeedValue: defaultSeedValue,
+				ollamaReasoning: defaultThinking,
+			}).catch((err) => {
+				console.error("Failed to reset Ollama defaults:", err)
+			})
+		}, [selectedModelId, selectedModelInfo, handleFieldsChange])
 
 		// Get model display name
 		const modelDisplayName = useMemo(() => {
@@ -3164,66 +3486,9 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 					)}
 				</div>
 
-				{/* Row 2: Ollama hardware stats, sampling controls, and reasoning toggle */}
+				{/* Row 2: Ollama sampling controls (Temperature, Min-P, Top-P, Top-K, Seed, Think) */}
 				{selectedProvider === "ollama" && (
 					<div className="flex flex-wrap items-center gap-2 px-3 pb-1.5 pt-0 text-xs">
-						<div className="flex items-center gap-1 shrink-0">
-							{(() => {
-								const isTuned =
-									autotuneStatusType === "success" ||
-									tunedContextSize !== null ||
-									(selectedProvider === "ollama" && Boolean(apiConfiguration?.ollamaIsTuned))
-								const isRunning = isTuned || ollamaStatus.isRunning
-								const gpuPercent = isTuned ? 100 : (ollamaStatus.isRunning ? ollamaStatus.gpuPercent : 100)
-								const vramBytes = Number(ollamaStatus.sizeVram || 0)
-								const vramGb = vramBytes > 0 ? (vramBytes / (1024 * 1024 * 1024)).toFixed(1) : null
-
-								let ratioBg = "#544120"
-								if (gpuPercent >= 100) {
-									ratioBg = "#223b2d"
-								} else if (gpuPercent <= 0) {
-									ratioBg = "#522b2b"
-								}
-
-								return (
-									<div
-										className="flex items-center gap-1.5 px-1.5 py-0.5 rounded text-[10px] font-mono select-none text-white transition-colors"
-										data-testid="gpu-cpu-ratio"
-										style={{ backgroundColor: ratioBg }}
-										title={
-											isTuned
-												? `Ollama Active Model: ${ollamaStatus.modelName || effectiveOllamaModel || selectedModelId}\n100% GPU Utilized (0% CPU Offload)${vramBytes > 0 ? `\nVRAM: ${(vramBytes / (1024 * 1024 * 1024)).toFixed(2)} GB` : ""}`
-												: isRunning
-													? `Ollama Active Model: ${ollamaStatus.modelName || selectedModelId}\nVRAM: ${(Number(ollamaStatus.sizeVram) / (1024 * 1024 * 1024)).toFixed(2)} GB / ${(Number(ollamaStatus.size) / (1024 * 1024 * 1024)).toFixed(2)} GB (${ollamaStatus.gpuPercent}% GPU / ${ollamaStatus.cpuPercent}% CPU)`
-													: "Ollama: Ready / Idle (loads weights into VRAM on generation)"
-										}>
-										<CpuIcon size={11} />
-										<span>
-											{isTuned
-												? `GPU: 100%${vramGb ? ` (${vramGb} GB)` : ""}`
-												: isRunning
-													? `GPU: ${ollamaStatus.gpuPercent}%${vramGb ? ` (${vramGb} GB)` : ""}`
-													: "GPU: 100% (Idle)"}
-										</span>
-									</div>
-								)
-							})()}
-							<button
-								aria-label="Free VRAM"
-								className="flex items-center justify-center p-1 rounded bg-[var(--vscode-button-secondaryBackground)] hover:bg-[var(--vscode-button-secondaryHoverBackground)] text-[var(--vscode-button-secondaryForeground)] cursor-pointer transition-colors border-0 select-none disabled:opacity-40 disabled:cursor-not-allowed"
-								data-testid="unload-ollama-model-button"
-								disabled={isUnloadingOllama || (!ollamaStatus.isRunning && autotuneStatusType !== "success" && !ollamaStatus.modelName)}
-								onClick={handleUnloadOllamaModel}
-								title={
-									ollamaStatus.isRunning || autotuneStatusType === "success"
-										? `Unload ${ollamaStatus.modelName || selectedModelId} and free VRAM (${(Number(ollamaStatus.sizeVram) / (1024 * 1024 * 1024)).toFixed(2)} GB)`
-										: "No model currently loaded in VRAM"
-								}
-								type="button">
-								<PowerOffIcon className={isUnloadingOllama ? "animate-spin" : ""} size={11} />
-							</button>
-						</div>
-
 						{/* Temperature Stepper with Verbose Label */}
 						<div
 							className="flex items-center rounded border border-[var(--vscode-input-border)] bg-[var(--vscode-input-background)] text-[10px] font-mono shrink-0 select-none overflow-hidden h-5"
@@ -3319,6 +3584,355 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 								<PlusIcon size={10} />
 							</button>
 						</div>
+
+						{/* Top-P Nucleus Sampling Stepper */}
+						<div
+							className="flex items-center rounded border border-[var(--vscode-input-border)] bg-[var(--vscode-input-background)] text-[10px] font-mono shrink-0 select-none overflow-hidden h-5"
+							title="Top-P (Nucleus Sampling): 0.9 to 0.95. Accumulates the most likely tokens until their combined probability reaches this threshold (e.g., top 95%). (0.0 to 1.0, default 0.90)">
+							<div
+								className="pl-1.5 pr-0.5 text-[var(--vscode-descriptionForeground)] flex items-center gap-1 cursor-help"
+								title={`Top-P: ${topP.toFixed(2)}`}>
+								<span>Top-P</span>
+							</div>
+							<button
+								aria-label="Decrease Top-P"
+								className="px-1 h-full flex items-center justify-center text-[var(--vscode-foreground)] hover:bg-[var(--vscode-toolbar-hoverBackground)] cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed border-0 bg-transparent transition-colors"
+								data-testid="top-p-decrement"
+								disabled={topP <= 0.01}
+								onClick={() => handleTopPStep(-0.05)}
+								title="Decrease Top-P (-0.05)"
+								type="button">
+								<MinusIcon size={10} />
+							</button>
+							<input
+								className="w-[30px] h-full bg-transparent text-center text-[10px] font-mono text-[var(--vscode-foreground)] focus:outline-none border-0 p-0 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+								data-testid="top-p-input"
+								max={1}
+								min={0}
+								onChange={(e) => {
+									const val = parseFloat(e.target.value)
+									if (!Number.isNaN(val)) {
+										handleTopPChange(val)
+									}
+								}}
+								step={0.01}
+								title="Top-P: 0.00 to 1.00 (typical 0.90 - 0.95, default 0.90)"
+								type="number"
+								value={topP.toFixed(2)}
+							/>
+							<button
+								aria-label="Increase Top-P"
+								className="px-1 h-full flex items-center justify-center text-[var(--vscode-foreground)] hover:bg-[var(--vscode-toolbar-hoverBackground)] cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed border-0 bg-transparent transition-colors"
+								data-testid="top-p-increment"
+								disabled={topP >= 1.0}
+								onClick={() => handleTopPStep(0.05)}
+								title="Increase Top-P (+0.05)"
+								type="button">
+								<PlusIcon size={10} />
+							</button>
+						</div>
+
+						{/* Top-K Sampling Stepper */}
+						<div
+							className="flex items-center rounded border border-[var(--vscode-input-border)] bg-[var(--vscode-input-background)] text-[10px] font-mono shrink-0 select-none overflow-hidden h-5"
+							title="Top-K: 40 to 50. Limits the pool of potential next words to strictly the top &quot;K&quot; most probable choices. (0 to 100+, default 40)">
+							<div
+								className="pl-1.5 pr-0.5 text-[var(--vscode-descriptionForeground)] flex items-center gap-1 cursor-help"
+								title={`Top-K: ${topK}`}>
+								<span>Top-K</span>
+							</div>
+							<button
+								aria-label="Decrease Top-K"
+								className="px-1 h-full flex items-center justify-center text-[var(--vscode-foreground)] hover:bg-[var(--vscode-toolbar-hoverBackground)] cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed border-0 bg-transparent transition-colors"
+								data-testid="top-k-decrement"
+								disabled={topK <= 0}
+								onClick={() => handleTopKStep(-5)}
+								title="Decrease Top-K (-5)"
+								type="button">
+								<MinusIcon size={10} />
+							</button>
+							<input
+								className="w-[28px] h-full bg-transparent text-center text-[10px] font-mono text-[var(--vscode-foreground)] focus:outline-none border-0 p-0 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+								data-testid="top-k-input"
+								max={200}
+								min={0}
+								onChange={(e) => {
+									const val = parseInt(e.target.value, 10)
+									if (!Number.isNaN(val)) {
+										handleTopKChange(val)
+									}
+								}}
+								step={1}
+								title="Top-K: 0 to 100+ (typical 40 - 50, default 40)"
+								type="number"
+								value={topK}
+							/>
+							<button
+								aria-label="Increase Top-K"
+								className="px-1 h-full flex items-center justify-center text-[var(--vscode-foreground)] hover:bg-[var(--vscode-toolbar-hoverBackground)] cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed border-0 bg-transparent transition-colors"
+								data-testid="top-k-increment"
+								disabled={topK >= 200}
+								onClick={() => handleTopKStep(5)}
+								title="Increase Top-K (+5)"
+								type="button">
+								<PlusIcon size={10} />
+							</button>
+						</div>
+
+						{/* Repeat Penalty Stepper */}
+						<div
+							className="flex items-center rounded border border-[var(--vscode-input-border)] bg-[var(--vscode-input-background)] text-[10px] font-mono shrink-0 select-none overflow-hidden h-5"
+							title="Repeat Penalty: 1.0 to 1.2. Penalizes tokens that have already appeared recently to prevent the model from getting stuck in repetitive loops. (0.0 to 2.0, default 1.10)">
+							<div
+								className="pl-1.5 pr-0.5 text-[var(--vscode-descriptionForeground)] flex items-center gap-1 cursor-help"
+								title={`Repeat Penalty: ${repeatPenalty.toFixed(2)}`}>
+								<span>Repeat</span>
+							</div>
+							<button
+								aria-label="Decrease repeat penalty"
+								className="px-1 h-full flex items-center justify-center text-[var(--vscode-foreground)] hover:bg-[var(--vscode-toolbar-hoverBackground)] cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed border-0 bg-transparent transition-colors"
+								data-testid="repeat-penalty-decrement"
+								disabled={repeatPenalty <= 0.05}
+								onClick={() => handleRepeatPenaltyStep(-0.05)}
+								title="Decrease repeat penalty (-0.05)"
+								type="button">
+								<MinusIcon size={10} />
+							</button>
+							<input
+								className="w-[28px] h-full bg-transparent text-center text-[10px] font-mono text-[var(--vscode-foreground)] focus:outline-none border-0 p-0 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+								data-testid="repeat-penalty-input"
+								max={2}
+								min={0}
+								onChange={(e) => {
+									const val = parseFloat(e.target.value)
+									if (!Number.isNaN(val)) {
+										handleRepeatPenaltyChange(val)
+									}
+								}}
+								step={0.01}
+								title="Repeat Penalty: 0.00 to 2.00 (typical 1.00 - 1.20, default 1.10)"
+								type="number"
+								value={repeatPenalty.toFixed(2)}
+							/>
+							<button
+								aria-label="Increase repeat penalty"
+								className="px-1 h-full flex items-center justify-center text-[var(--vscode-foreground)] hover:bg-[var(--vscode-toolbar-hoverBackground)] cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed border-0 bg-transparent transition-colors"
+								data-testid="repeat-penalty-increment"
+								disabled={repeatPenalty >= 2.0}
+								onClick={() => handleRepeatPenaltyStep(0.05)}
+								title="Increase repeat penalty (+0.05)"
+								type="button">
+								<PlusIcon size={10} />
+							</button>
+						</div>
+
+						{/* Separator */}
+						<div className="h-3.5 w-px bg-[var(--vscode-input-border)] shrink-0 mx-0.5" aria-hidden="true" />
+
+						{/* Reset Defaults Button */}
+						<button
+							aria-label="Reset all Ollama model settings to recommended defaults"
+							className="flex items-center gap-1 px-1.5 py-0.5 rounded border border-[var(--vscode-input-border)] bg-transparent hover:bg-[var(--vscode-toolbar-hoverBackground)] text-[var(--vscode-descriptionForeground)] hover:text-[var(--vscode-foreground)] text-[10px] font-mono transition-colors cursor-pointer select-none shrink-0"
+							data-testid="ollama-reset-defaults-button"
+							onClick={handleResetDefaults}
+							title="Reset all settings to recommended defaults:&#10;Temp: 0.8, Min-P: 0.00, Top-P: 0.90, Top-K: 40, Repeat: 1.10&#10;Predict: 128, GPU: Full (99), Seed: Off, Think: Default"
+							type="button">
+							<RotateCcwIcon size={10} />
+							<span>Defaults</span>
+						</button>
+					</div>
+				)}
+
+				{/* Row 3: Ollama hardware & lifecycle: GPU/CPU percentage, Unload, Preload, Max tokens (num_predict), GPU offload layers (num_gpu) */}
+				{selectedProvider === "ollama" && (
+					<div className="flex flex-wrap items-center gap-2 px-3 pb-1.5 pt-0 text-xs">
+						{/* GPU/CPU Ratio Badge & Model Unload */}
+						<div className="flex items-center gap-1 shrink-0">
+							{(() => {
+								const isTuned =
+									autotuneStatusType === "success" ||
+									tunedContextSize !== null ||
+									(selectedProvider === "ollama" && Boolean(apiConfiguration?.ollamaIsTuned))
+								const isRunning = isTuned || ollamaStatus.isRunning
+								const gpuPercent = isTuned ? 100 : (ollamaStatus.isRunning ? ollamaStatus.gpuPercent : 100)
+								const vramBytes = Number(ollamaStatus.sizeVram || 0)
+								const vramGb = vramBytes > 0 ? (vramBytes / (1024 * 1024 * 1024)).toFixed(1) : null
+
+								let ratioBg = "#544120"
+								if (gpuPercent >= 100) {
+									ratioBg = "#223b2d"
+								} else if (gpuPercent <= 0) {
+									ratioBg = "#522b2b"
+								}
+
+								return (
+									<div
+										className="flex items-center gap-1.5 px-1.5 py-0.5 rounded text-[10px] font-mono select-none text-white transition-colors"
+										data-testid="gpu-cpu-ratio"
+										style={{ backgroundColor: ratioBg }}
+										title={
+											isTuned
+												? `Ollama Active Model: ${ollamaStatus.modelName || effectiveOllamaModel || selectedModelId}\n100% GPU Utilized (0% CPU Offload)${vramBytes > 0 ? `\nVRAM: ${(vramBytes / (1024 * 1024 * 1024)).toFixed(2)} GB` : ""}`
+												: isRunning
+													? `Ollama Active Model: ${ollamaStatus.modelName || selectedModelId}\nVRAM: ${(Number(ollamaStatus.sizeVram) / (1024 * 1024 * 1024)).toFixed(2)} GB / ${(Number(ollamaStatus.size) / (1024 * 1024 * 1024)).toFixed(2)} GB (${ollamaStatus.gpuPercent}% GPU / ${ollamaStatus.cpuPercent}% CPU)`
+													: "Ollama: Ready / Idle (loads weights into VRAM on generation)"
+										}>
+										<CpuIcon size={11} />
+										<span>
+											{isTuned
+												? `GPU: 100%${vramGb ? ` (${vramGb} GB)` : ""}`
+												: isRunning
+													? `GPU: ${ollamaStatus.gpuPercent}%${vramGb ? ` (${vramGb} GB)` : ""}`
+													: "GPU: 100% (Idle)"}
+										</span>
+									</div>
+								)
+							})()}
+							<button
+								aria-label="Free VRAM"
+								className="flex items-center justify-center p-1 rounded bg-[var(--vscode-button-secondaryBackground)] hover:bg-[var(--vscode-button-secondaryHoverBackground)] text-[var(--vscode-button-secondaryForeground)] cursor-pointer transition-colors border-0 select-none disabled:opacity-40 disabled:cursor-not-allowed"
+								data-testid="unload-ollama-model-button"
+								disabled={isUnloadingOllama || (!ollamaStatus.isRunning && autotuneStatusType !== "success" && !ollamaStatus.modelName)}
+								onClick={handleUnloadOllamaModel}
+								title={
+									ollamaStatus.isRunning || autotuneStatusType === "success"
+										? `Unload ${ollamaStatus.modelName || selectedModelId} and free VRAM (${(Number(ollamaStatus.sizeVram) / (1024 * 1024 * 1024)).toFixed(2)} GB)`
+										: "No model currently loaded in VRAM"
+								}
+								type="button">
+								<PowerOffIcon className={isUnloadingOllama ? "animate-spin" : ""} size={11} />
+							</button>
+						</div>
+
+						{/* Preload / Warmup Button */}
+						<button
+							aria-label="Preload model into VRAM"
+							className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono transition-colors cursor-pointer select-none bg-[var(--vscode-button-secondaryBackground)] hover:bg-[var(--vscode-button-secondaryHoverBackground)] text-[var(--vscode-button-secondaryForeground)] border border-transparent disabled:opacity-40 disabled:cursor-not-allowed"
+							data-testid="ollama-preload-button"
+							disabled={isPreloadingOllama || !selectedModelId}
+							onClick={handlePreloadOllamaModel}
+							title="Preload Model: Issue lightweight request with keep_alive: 10m to warm up weights and KV cache in VRAM"
+							type="button">
+							<ZapIcon className={isPreloadingOllama ? "animate-spin text-amber-400" : "text-amber-400"} size={11} />
+							<span>{isPreloadingOllama ? "Preloading..." : preloadOllamaStatus ? preloadOllamaStatus : "Preload"}</span>
+						</button>
+
+						{/* Max Generation Tokens (num_predict) */}
+						<div
+							className="flex items-center rounded border border-[var(--vscode-input-border)] bg-[var(--vscode-input-background)] text-[10px] font-mono shrink-0 select-none overflow-hidden h-5"
+							title="Max Generation Tokens (num_predict): limits maximum tokens generated (-1 for unlimited, default 128)">
+							<div
+								className="pl-1.5 pr-0.5 text-[var(--vscode-descriptionForeground)] flex items-center gap-1 cursor-help"
+								title={`Max Tokens: ${numPredict === -1 ? "Unlimited (-1)" : numPredict}`}>
+								<span>Predict</span>
+							</div>
+							<button
+								aria-label="Decrease max tokens"
+								className="px-1 h-full flex items-center justify-center text-[var(--vscode-foreground)] hover:bg-[var(--vscode-toolbar-hoverBackground)] cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed border-0 bg-transparent transition-colors"
+								data-testid="num-predict-decrement"
+								disabled={numPredict <= -1}
+								onClick={() => {
+									if (numPredict <= 128 && numPredict > -1) {
+										handleNumPredictChange(-1)
+									} else if (numPredict > 128) {
+										handleNumPredictChange(Math.max(128, numPredict - 128))
+									}
+								}}
+								title="Decrease max tokens (-128)"
+								type="button">
+								<MinusIcon size={10} />
+							</button>
+							<input
+								className="w-[36px] h-full bg-transparent text-center text-[10px] font-mono text-[var(--vscode-foreground)] focus:outline-none border-0 p-0 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+								data-testid="num-predict-input"
+								onChange={(e) => {
+									const val = parseInt(e.target.value, 10)
+									if (!Number.isNaN(val)) {
+										handleNumPredictChange(val)
+									}
+								}}
+								title="Max generation tokens (-1 for unlimited)"
+								type="number"
+								value={numPredict}
+							/>
+							<button
+								aria-label="Increase max tokens"
+								className="px-1 h-full flex items-center justify-center text-[var(--vscode-foreground)] hover:bg-[var(--vscode-toolbar-hoverBackground)] cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed border-0 bg-transparent transition-colors"
+								data-testid="num-predict-increment"
+								onClick={() => {
+									if (numPredict === -1) {
+										handleNumPredictChange(128)
+									} else {
+										handleNumPredictChange(numPredict + 128)
+									}
+								}}
+								title="Increase max tokens (+128)"
+								type="button">
+								<PlusIcon size={10} />
+							</button>
+						</div>
+
+						{/* Full GPU Toggle & Layer Stepper */}
+						<button
+							aria-label={fullGpu ? "Custom GPU layers" : "Full GPU offload"}
+							className={`flex items-center gap-1 px-1.5 py-0.5 rounded border text-[10px] font-mono transition-colors cursor-pointer select-none ${
+								fullGpu
+									? "bg-[var(--vscode-button-secondaryBackground)] border-[var(--vscode-button-border,var(--vscode-button-secondaryBackground))] text-[var(--vscode-button-secondaryForeground)]"
+									: "bg-transparent border-[var(--vscode-input-border)] text-[var(--vscode-descriptionForeground)] hover:text-[var(--vscode-foreground)]"
+							}`}
+							data-testid="ollama-full-gpu-toggle"
+							onClick={handleFullGpuToggle}
+							title={
+								fullGpu
+									? "Full GPU Offload: 99 layers (all layers on GPU)\nClick to set custom layer count"
+									: `Custom GPU Layers: ${numGpu} layers\nClick for Full GPU (99)`
+							}
+							type="button">
+							<CpuIcon size={11} />
+							<span>GPU: {fullGpu ? "Full (99)" : `${numGpu}L`}</span>
+						</button>
+
+						{!fullGpu && (
+							<div
+								className="flex items-center rounded border border-[var(--vscode-input-border)] bg-[var(--vscode-input-background)] text-[10px] font-mono shrink-0 select-none overflow-hidden h-5"
+								title="GPU Offload Layers (num_gpu): 0 to 99 layers">
+								<button
+									aria-label="Decrease GPU layers"
+									className="px-1 h-full flex items-center justify-center text-[var(--vscode-foreground)] hover:bg-[var(--vscode-toolbar-hoverBackground)] cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed border-0 bg-transparent transition-colors"
+									data-testid="num-gpu-decrement"
+									disabled={numGpu <= 0}
+									onClick={() => handleNumGpuChange(numGpu - 1)}
+									title="Decrease GPU layers (-1)"
+									type="button">
+									<MinusIcon size={10} />
+								</button>
+								<input
+									className="w-[26px] h-full bg-transparent text-center text-[10px] font-mono text-[var(--vscode-foreground)] focus:outline-none border-0 p-0 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+									data-testid="num-gpu-input"
+									max={99}
+									min={0}
+									onChange={(e) => {
+										const val = parseInt(e.target.value, 10)
+										if (!Number.isNaN(val)) {
+											handleNumGpuChange(val)
+										}
+									}}
+									title="GPU layers (0 to 99)"
+									type="number"
+									value={numGpu}
+								/>
+								<button
+									aria-label="Increase GPU layers"
+									className="px-1 h-full flex items-center justify-center text-[var(--vscode-foreground)] hover:bg-[var(--vscode-toolbar-hoverBackground)] cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed border-0 bg-transparent transition-colors"
+									data-testid="num-gpu-increment"
+									disabled={numGpu >= 99}
+									onClick={() => handleNumGpuChange(numGpu + 1)}
+									title="Increase GPU layers (+1)"
+									type="button">
+									<PlusIcon size={10} />
+								</button>
+							</div>
+						)}
 
 						{/* Deterministic Seed Toggle */}
 						<button

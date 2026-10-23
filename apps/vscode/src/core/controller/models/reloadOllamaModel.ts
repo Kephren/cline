@@ -59,9 +59,21 @@ export async function reloadOllamaModel(controller: Controller, request: ReloadO
 				.catch(() => null)
 		}
 
-		// Preload target model with new options (num_ctx)
+		// Preload target model with runtime options (num_ctx, num_gpu, num_predict)
 		if (request.modelName) {
 			const numCtx = request.contextWindow > 0 ? request.contextWindow : undefined
+			const options: Record<string, unknown> = {
+				...(numCtx ? { num_ctx: numCtx } : {}),
+				...(typeof request.numGpu === "number" && request.numGpu >= 0 ? { num_gpu: request.numGpu } : {}),
+				...(typeof request.numPredict === "number" ? { num_predict: request.numPredict } : {}),
+				...(typeof request.topP === "number" && request.topP > 0 ? { top_p: request.topP } : {}),
+				...(typeof request.topK === "number" && request.topK >= 0 ? { top_k: request.topK } : {}),
+				...(typeof request.repeatPenalty === "number" && request.repeatPenalty > 0
+					? { repeat_penalty: request.repeatPenalty }
+					: {}),
+				num_batch: 512,
+			}
+
 			await axios
 				.post(
 					`${normalizedBaseUrl}/api/generate`,
@@ -69,10 +81,8 @@ export async function reloadOllamaModel(controller: Controller, request: ReloadO
 						model: request.modelName,
 						prompt: "",
 						stream: false,
-						options: {
-							...(numCtx ? { num_ctx: numCtx } : {}),
-							num_batch: 512,
-						},
+						keep_alive: request.keepAlive || "10m",
+						options,
 					},
 					axiosConfig,
 				)

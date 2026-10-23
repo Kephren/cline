@@ -2047,6 +2047,49 @@ describe("composeAiSdkProviderOptions: family/provider thinking patches", () => 
 				{ bucket: "openaiCompatible", lacks: ["think", "reasoning"] },
 			],
 		},
+		{
+			name: "ollama model with num_predict and num_gpu custom options",
+			request: {
+				providerId: "ollama",
+				modelId: "llama3.1:latest",
+				metadata: { num_predict: 128, num_gpu: 99 },
+			},
+			expect: [
+				{
+					bucket: "ollama",
+					has: {
+						options: {
+							num_ctx: 32768,
+							num_batch: 512,
+							num_predict: 128,
+							num_gpu: 99,
+						},
+					},
+				},
+			],
+		},
+		{
+			name: "ollama model with top_p, top_k, and repeat_penalty sampling options",
+			request: {
+				providerId: "ollama",
+				modelId: "llama3.1:latest",
+				metadata: { top_p: 0.95, top_k: 40, repeat_penalty: 1.15 },
+			},
+			expect: [
+				{
+					bucket: "ollama",
+					has: {
+						options: {
+							num_ctx: 32768,
+							num_batch: 512,
+							top_p: 0.95,
+							top_k: 40,
+							repeat_penalty: 1.15,
+						},
+					},
+				},
+			],
+		},
 	]);
 });
 

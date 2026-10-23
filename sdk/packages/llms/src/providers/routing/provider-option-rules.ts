@@ -463,6 +463,16 @@ const ollamaNativeOptionsRule: ProviderOptionRule = {
 			nativeOptions.min_p = minP;
 		}
 
+		const topP = requestMeta.top_p ?? modelAny.topP ?? modelAny.top_p ?? configOptions.top_p;
+		if (typeof topP === "number" && Number.isFinite(topP) && topP > 0) {
+			nativeOptions.top_p = topP;
+		}
+
+		const topK = requestMeta.top_k ?? modelAny.topK ?? modelAny.top_k ?? configOptions.top_k;
+		if (typeof topK === "number" && Number.isFinite(topK) && topK >= 0) {
+			nativeOptions.top_k = Math.floor(topK);
+		}
+
 		const repeatPenalty =
 			requestMeta.repeat_penalty ??
 			modelAny.repeatPenalty ??
@@ -470,6 +480,24 @@ const ollamaNativeOptionsRule: ProviderOptionRule = {
 			configOptions.repeat_penalty;
 		if (typeof repeatPenalty === "number" && Number.isFinite(repeatPenalty) && repeatPenalty > 0) {
 			nativeOptions.repeat_penalty = repeatPenalty;
+		}
+
+		const numPredict =
+			requestMeta.num_predict ??
+			modelAny.numPredict ??
+			modelAny.num_predict ??
+			configOptions.num_predict;
+		if (typeof numPredict === "number" && Number.isFinite(numPredict)) {
+			nativeOptions.num_predict = Math.floor(numPredict);
+		}
+
+		const numGpu =
+			requestMeta.num_gpu ??
+			modelAny.numGpu ??
+			modelAny.num_gpu ??
+			configOptions.num_gpu;
+		if (typeof numGpu === "number" && Number.isFinite(numGpu) && numGpu >= 0) {
+			nativeOptions.num_gpu = Math.floor(numGpu);
 		}
 
 		const bucketOptions: Record<string, unknown> = {

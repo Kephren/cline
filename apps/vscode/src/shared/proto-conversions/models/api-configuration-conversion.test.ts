@@ -31,6 +31,9 @@ describe("api configuration provider conversion", () => {
 			ollamaIsTuned: true,
 			ollamaTunedContextSize: 16384,
 			ollamaTunedModel: "qwen2.5:latest",
+			ollamaTopP: 0.92,
+			ollamaTopK: 45,
+			ollamaRepeatPenalty: 1.15,
 		}
 
 		const proto = convertApiConfigurationToProto(config)
@@ -44,5 +47,8 @@ describe("api configuration provider conversion", () => {
 		expect(result.ollamaIsTuned).toBe(true)
 		expect(result.ollamaTunedContextSize).toBe(16384)
 		expect(result.ollamaTunedModel).toBe("qwen2.5:latest")
+		expect(result.ollamaTopP).toBe(0.92)
+		expect(result.ollamaTopK).toBe(45)
+		expect(result.ollamaRepeatPenalty).toBe(1.15)
 	})
 })

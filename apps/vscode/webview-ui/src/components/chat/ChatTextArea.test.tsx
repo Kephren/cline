@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
 	getOllamaModels: vi.fn(async () => ({ values: [] })),
 	apiConfiguration: {} as Record<string, unknown>,
 	providerConfig: undefined as Record<string, unknown> | undefined,
+	reloadOllamaModel: vi.fn(async () => ({})),
 	navigateToSettingsModelPicker: vi.fn(),
 	clineMessages: [] as any[],
 }))
@@ -66,6 +67,7 @@ vi.mock("@/services/grpc-client", () => ({
 		writeProviderConfig: (...args: unknown[]) => mocks.writeProviderConfig(...args),
 		readProviderConfig: vi.fn(async () => mocks.providerConfig ?? {}),
 		probeOllamaContext: (...args: unknown[]) => mocks.probeOllamaContext(...args),
+		reloadOllamaModel: (...args: unknown[]) => mocks.reloadOllamaModel(...args),
 		updateApiConfigurationProto: (...args: unknown[]) => mocks.updateApiConfigurationProto(...args),
 	},
 }))
@@ -860,6 +862,9 @@ describe("ChatTextArea Ollama settings persistence", () => {
 		mocks.providerConfig = { baseUrl: "http://127.0.0.1:11434" }
 		mocks.apiConfiguration = { ollamaBaseUrl: "http://127.0.0.1:11434" }
 		mocks.updateApiConfigurationProto.mockClear()
+		if (typeof localStorage !== "undefined" && typeof localStorage.clear === "function") {
+			localStorage.clear()
+		}
 	})
 
 	it("restores persisted temperature from apiConfiguration", () => {
@@ -936,6 +941,87 @@ describe("ChatTextArea Ollama settings persistence", () => {
 			expect.objectContaining({
 				apiConfiguration: expect.objectContaining({
 					ollamaMinP: 0.05,
+				}),
+			}),
+		)
+	})
+
+	it("restores persisted Top-P from apiConfiguration", () => {
+		mocks.apiConfiguration = {
+			ollamaTopP: 0.95,
+		}
+
+		renderTextArea()
+		const input = screen.getByTestId("top-p-input") as HTMLInputElement
+		expect(input.value).toBe("0.95")
+	})
+
+	it("persists Top-P changes to apiConfiguration", async () => {
+		renderTextArea()
+		const incrementBtn = screen.getByTestId("top-p-increment")
+
+		await act(async () => {
+			fireEvent.click(incrementBtn)
+		})
+
+		expect(mocks.updateApiConfigurationProto).toHaveBeenCalledWith(
+			expect.objectContaining({
+				apiConfiguration: expect.objectContaining({
+					ollamaTopP: 0.95,
+				}),
+			}),
+		)
+	})
+
+	it("restores persisted Top-K from apiConfiguration", () => {
+		mocks.apiConfiguration = {
+			ollamaTopK: 50,
+		}
+
+		renderTextArea()
+		const input = screen.getByTestId("top-k-input") as HTMLInputElement
+		expect(input.value).toBe("50")
+	})
+
+	it("persists Top-K changes to apiConfiguration", async () => {
+		renderTextArea()
+		const incrementBtn = screen.getByTestId("top-k-increment")
+
+		await act(async () => {
+			fireEvent.click(incrementBtn)
+		})
+
+		expect(mocks.updateApiConfigurationProto).toHaveBeenCalledWith(
+			expect.objectContaining({
+				apiConfiguration: expect.objectContaining({
+					ollamaTopK: 45,
+				}),
+			}),
+		)
+	})
+
+	it("restores persisted repeat penalty from apiConfiguration", () => {
+		mocks.apiConfiguration = {
+			ollamaRepeatPenalty: 1.25,
+		}
+
+		renderTextArea()
+		const input = screen.getByTestId("repeat-penalty-input") as HTMLInputElement
+		expect(input.value).toBe("1.25")
+	})
+
+	it("persists repeat penalty changes to apiConfiguration", async () => {
+		renderTextArea()
+		const incrementBtn = screen.getByTestId("repeat-penalty-increment")
+
+		await act(async () => {
+			fireEvent.click(incrementBtn)
+		})
+
+		expect(mocks.updateApiConfigurationProto).toHaveBeenCalledWith(
+			expect.objectContaining({
+				apiConfiguration: expect.objectContaining({
+					ollamaRepeatPenalty: 1.15,
 				}),
 			}),
 		)
@@ -1265,6 +1351,136 @@ describe("ChatTextArea Ollama settings persistence", () => {
 			expect(findLargestFittingContextSize(32768)).toBe(32768)
 			expect(findLargestFittingContextSize(90112)).toBe(90112)
 			expect(findLargestFittingContextSize(110592)).toBe(110592)
+		})
+	})
+
+	describe("Ollama Row 3 runtime model options", () => {
+		beforeEach(() => {
+			mocks.selectedProvider = "ollama"
+			mocks.selectedModelId = "qwen2.5-coder:7b"
+			mocks.apiConfiguration = {
+				ollamaBaseUrl: "http://localhost:11434",
+				ollamaNumPredict: 128,
+				ollamaNumGpu: 99,
+			}
+		})
+
+		it("renders Preload button and triggers reloadOllamaModel with keep_alive", async () => {
+			renderTextArea()
+
+			const preloadButton = await screen.findByTestId("ollama-preload-button")
+			const gpuRatio = screen.getByTestId("gpu-cpu-ratio")
+			const unloadButton = screen.getByTestId("unload-ollama-model-button")
+			expect(preloadButton).toBeInTheDocument()
+			expect(gpuRatio).toBeInTheDocument()
+			expect(unloadButton).toBeInTheDocument()
+			expect(preloadButton.parentElement).toContainElement(gpuRatio)
+			expect(preloadButton.parentElement).toContainElement(unloadButton)
+
+			await act(async () => {
+				fireEvent.click(preloadButton)
+			})
+
+			expect(mocks.reloadOllamaModel).toHaveBeenCalledWith(
+				expect.objectContaining({
+					baseUrl: "http://localhost:11434",
+					modelName: "qwen2.5-coder:7b",
+					keepAlive: "10m",
+					numGpu: 99,
+					numPredict: 128,
+					topP: 0.9,
+					topK: 40,
+					repeatPenalty: 1.1,
+				}),
+			)
+		})
+
+		it("adjusts max tokens (num_predict) via stepper and direct input", async () => {
+			renderTextArea()
+
+			const input = (await screen.findByTestId("num-predict-input")) as HTMLInputElement
+			expect(input.value).toBe("128")
+
+			const incButton = screen.getByTestId("num-predict-increment")
+			await act(async () => {
+				fireEvent.click(incButton)
+			})
+
+			expect(input.value).toBe("256")
+			expect(localStorage.getItem("cline:ollama:numPredict")).toBe("256")
+		})
+
+		it("toggles Full GPU offload and allows custom layer count adjustments", async () => {
+			renderTextArea()
+
+			const fullGpuToggle = await screen.findByTestId("ollama-full-gpu-toggle")
+			expect(fullGpuToggle).toHaveTextContent("GPU: Full (99)")
+
+			// Click toggle to switch to custom layers mode
+			await act(async () => {
+				fireEvent.click(fullGpuToggle)
+			})
+
+			expect(fullGpuToggle).toHaveTextContent("GPU: 0L")
+			expect(screen.getByTestId("num-gpu-input")).toBeInTheDocument()
+
+			const incGpu = screen.getByTestId("num-gpu-increment")
+			await act(async () => {
+				fireEvent.click(incGpu)
+			})
+
+			expect(screen.getByTestId("num-gpu-input")).toHaveValue(1)
+			expect(localStorage.getItem("cline:ollama:numGpu")).toBe("1")
+		})
+
+		it("resets all model settings to recommended defaults when Defaults button is clicked", async () => {
+			mocks.apiConfiguration = {
+				ollamaTemperature: 1.5,
+				ollamaMinP: 0.25,
+				ollamaTopP: 0.98,
+				ollamaTopK: 80,
+				ollamaRepeatPenalty: 1.4,
+				ollamaNumPredict: 512,
+				ollamaNumGpu: 32,
+				ollamaSeedEnabled: true,
+				ollamaSeedValue: 777,
+				ollamaReasoning: false,
+			}
+
+			renderTextArea()
+
+			const defaultsButton = await screen.findByTestId("ollama-reset-defaults-button")
+			expect(defaultsButton).toBeInTheDocument()
+
+			await act(async () => {
+				fireEvent.click(defaultsButton)
+			})
+
+			expect(mocks.updateApiConfigurationProto).toHaveBeenCalledWith(
+				expect.objectContaining({
+					apiConfiguration: expect.objectContaining({
+						ollamaTemperature: 0.8,
+						ollamaMinP: 0.0,
+						ollamaTopP: 0.9,
+						ollamaTopK: 40,
+						ollamaRepeatPenalty: 1.1,
+						ollamaNumPredict: 128,
+						ollamaNumGpu: 99,
+						ollamaSeedEnabled: false,
+						ollamaSeedValue: 42,
+					}),
+				}),
+			)
+
+			expect(localStorage.getItem("cline:ollama:temperature")).toBe("0.8")
+			expect(localStorage.getItem("cline:ollama:minP")).toBe("0")
+			expect(localStorage.getItem("cline:ollama:topP")).toBe("0.9")
+			expect(localStorage.getItem("cline:ollama:topK")).toBe("40")
+			expect(localStorage.getItem("cline:ollama:repeatPenalty")).toBe("1.1")
+			expect(localStorage.getItem("cline:ollama:numPredict")).toBe("128")
+			expect(localStorage.getItem("cline:ollama:numGpu")).toBe("99")
+			expect(localStorage.getItem("cline:ollama:seedEnabled")).toBe("false")
+			expect(localStorage.getItem("cline:ollama:seedValue")).toBe("42")
 		})
 	})
 })
