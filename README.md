@@ -164,6 +164,17 @@ Cline is not locked to a single AI provider. Use whichever model fits your workf
 | Ollama / LM Studio | Run local models on your machine |
 | Any OpenAI-compatible API | Self-hosted or third-party endpoints |
 
+## First-Class Local Model & Ollama Support
+
+Cline provides deep, native support for running local models via Ollama with dedicated controls and real-time hardware telemetry built directly into the interface:
+
+- **In-Chat Model Switching & Inspection**: Select and switch local Ollama models on the fly directly from the chat toolbar without leaving your conversation. View inspected model architecture details (parameter size, quantization level, family, context window) along with verified badges for native tool calling and multimodal vision support.
+- **VRAM Autotuning**: Automatically calibrate your context window size with one click (`GPU Context Tune`). The autotuner probes your hardware in fine-grained steps to find the optimal context size that fits 100% into GPU VRAM, preventing performance degradation from CPU memory spillover.
+- **Hardware & Inference Telemetry**: Monitor real-time GPU vs. CPU layer allocation and VRAM usage with dynamic color-coded indicators, alongside real-time inference speed (tokens/sec decode and prefill), token counts, duration, and session token usage.
+- **Granular Context Control**: Fine-tune your context window using a precision slider with increments from 512 up to 1M tokens, complete with snap-to-autotuned indicators and native context limit warnings.
+- **VRAM Lifecycle Management**: Free GPU VRAM immediately with one-click model unloading (`keep_alive: 0`), or preload and warm up model weights into VRAM before running tasks (`keep_alive: 10m`).
+- **Power-User Sampling & Generation Controls**: Directly adjust temperature, Min-P sampling, Top-P, Top-K, repeat penalty, max generation tokens (`num_predict`), GPU offload layers (`num_gpu`), deterministic seed (for reproducible completions), and reasoning/thinking mode toggles for models like DeepSeek-R1.
+
 ## Extend With Plugins or MCP Servers
 
 Extend Cline's capabilities with plugins. Using the SDK, register tools and lifecycle hooks programmatically through the plugin system for logging, auditing, policy enforcement, or adding domain-specific capabilities. Simple plugin example below.
