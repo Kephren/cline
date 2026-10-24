@@ -2,13 +2,17 @@ import { isClineProvider } from "@cline/shared";
 import { OLLAMA_DEFAULT_CONTEXT_WINDOW } from "../builtins";
 import {
 	getModelReasoningControls,
+	isAnthropicCompatibleModel,
 	isDeepSeekFamily,
 	isGlmModel,
 	isKimiK26Family as isKimiK26FamilyFact,
 	isMiniMaxM3Model,
 	isMoonshotKimiModelIdFallback,
+	modelReasoningDefaultsOn,
 	providerReasoningRouteMatches,
+	resolveModelFamily,
 } from "../model-facts";
+import { isOfficialAnthropicEndpoint } from "../url";
 import { buildGatewayReasoningOptions } from "./anthropic-compatible";
 import { buildOpenAINativeProviderOptions } from "./generic-compatible";
 import {
@@ -93,6 +97,27 @@ function resolveFamilyThinkingType(
 	return defaultWhenUnset;
 }
 
+function isOllamaThinkingCapable(input: ProviderOptionMatchInput): boolean {
+	return (
+		input.target === "ollama" &&
+		(input.context.model.capabilities?.includes("reasoning") === true ||
+			modelReasoningDefaultsOn({
+				request: input.request,
+				context: input.context,
+			}))
+	);
+}
+
+function resolveOllamaThink(
+	input: ProviderOptionMatchInput,
+): boolean | undefined {
+	const explicitlyEnabled = input.request.reasoning?.enabled;
+	if (typeof explicitlyEnabled === "boolean") {
+		return explicitlyEnabled;
+	}
+	return isOllamaThinkingCapable(input) ? true : undefined;
+}
+
 function buildReasoningPatchForProvider(
 	input: ProviderOptionBuildInput,
 	reasoning: Record<string, unknown> | undefined,
@@ -122,10 +147,18 @@ const directAnthropicProviderRule: ProviderOptionRule = {
 	id: "provider.anthropic.direct",
 	phase: "provider",
 	description:
-		"Direct Anthropic owns the anthropic bucket built by the base patch.",
+		"Direct Anthropic enables its recommended server-side refusal fallback.",
 	applies: (input) => input.request.providerId === "anthropic",
 	suppresses: { genericFanout: true },
-	build: () => undefined,
+	// The Anthropic adapter adds the required beta header. `fallbacks` exists
+	// only on the Claude API itself; strict-schema proxies such as Azure AI
+	// Foundry reject it with a 400. The endpoint check lives in `build`, not
+	// `applies`, so custom endpoints keep the fanout suppression and their
+	// request body is otherwise unchanged.
+	build: (input) =>
+		isOfficialAnthropicEndpoint(input.context.config.baseUrl)
+			? { anthropic: { fallbacks: "default" } }
+			: undefined,
 };
 
 const directGoogleProviderRule: ProviderOptionRule = {
@@ -136,6 +169,27 @@ const directGoogleProviderRule: ProviderOptionRule = {
 	applies: (input) => input.request.providerId === "google",
 	suppresses: { genericFanout: true },
 	build: () => undefined,
+};
+
+const routedAnthropicProviderFallbackRule: ProviderOptionRule = {
+	id: "provider.routed-anthropic.fallbacks",
+	phase: "provider",
+	description:
+		"OpenRouter and Cline enable provider failover for Anthropic models.",
+	applies: (input) =>
+		(input.request.providerId === "openrouter" ||
+			isClineProvider(input.request.providerId)) &&
+		isAnthropicCompatibleModel({
+			modelId: input.request.modelId,
+			family: resolveModelFamily(input.context),
+		}),
+	// Provider failover is distinct from Anthropic's refusal-model fallback.
+	build: (input) =>
+		buildProviderAndAliasPatch({
+			providerId: input.request.providerId,
+			providerOptionsKey: input.providerOptionsKey,
+			bucketOptions: { provider: { allow_fallbacks: true } },
+		}),
 };
 
 const openAiAdapterRule: ProviderOptionRule = {
@@ -337,13 +391,15 @@ const geminiThinkingRule: ProviderOptionRule = {
 	id: "provider.google-gemini.thinking-config",
 	phase: "provider",
 	description:
-		"Google/Gemini/Vertex uses thinkingConfig only for exact token budgets.",
+		"Google/Gemini/Vertex uses thinkingConfig only for exact token budgets, and only on models that advertise one; level-only models reject thinkingBudget.",
 	suppresses: { genericThinking: true },
 	applies: (input) =>
 		(input.request.providerId === "google" ||
 			input.request.providerId === "gemini" ||
 			input.request.providerId === "vertex") &&
-		typeof input.request.reasoning?.budgetTokens === "number",
+		typeof input.request.reasoning?.budgetTokens === "number" &&
+		getModelReasoningControls(input.context.model.reasoningOptions)?.budget !==
+			undefined,
 	build: (input) => {
 		const providerOptionsName =
 			input.request.providerId === "vertex" ? "vertex" : "google";
@@ -434,8 +490,76 @@ const ollamaNativeOptionsRule: ProviderOptionRule = {
 			contextWindow > 0
 				? Math.floor(contextWindow)
 				: OLLAMA_DEFAULT_CONTEXT_WINDOW;
-		const bucketOptions = {
-			options: { num_ctx: numCtx },
+		const modelAny = input.context.model as unknown as Record<string, unknown>;
+		const configAny = input.context.config as unknown as Record<string, unknown>;
+		const configOptions = (configAny.options ?? {}) as Record<string, unknown>;
+		const requestMeta = (input.request.metadata ?? {}) as Record<string, unknown>;
+
+		const numBatch =
+			requestMeta.num_batch ??
+			modelAny.numBatch ??
+			modelAny.num_batch ??
+			configOptions.num_batch ??
+			512;
+		const nativeOptions: Record<string, unknown> = {
+			num_ctx: numCtx,
+			num_batch:
+				typeof numBatch === "number" && Number.isFinite(numBatch) && numBatch > 0
+					? Math.floor(numBatch)
+					: 512,
+		};
+
+		const seed = requestMeta.seed ?? modelAny.seed ?? configOptions.seed;
+		if (typeof seed === "number" && Number.isFinite(seed) && seed >= 0) {
+			nativeOptions.seed = Math.floor(seed);
+		}
+
+		const minP = requestMeta.min_p ?? modelAny.minP ?? modelAny.min_p ?? configOptions.min_p;
+		if (typeof minP === "number" && Number.isFinite(minP) && minP > 0) {
+			nativeOptions.min_p = minP;
+		}
+
+		const topP = requestMeta.top_p ?? modelAny.topP ?? modelAny.top_p ?? configOptions.top_p;
+		if (typeof topP === "number" && Number.isFinite(topP) && topP > 0) {
+			nativeOptions.top_p = topP;
+		}
+
+		const topK = requestMeta.top_k ?? modelAny.topK ?? modelAny.top_k ?? configOptions.top_k;
+		if (typeof topK === "number" && Number.isFinite(topK) && topK >= 0) {
+			nativeOptions.top_k = Math.floor(topK);
+		}
+
+		const repeatPenalty =
+			requestMeta.repeat_penalty ??
+			modelAny.repeatPenalty ??
+			modelAny.repeat_penalty ??
+			configOptions.repeat_penalty;
+		if (typeof repeatPenalty === "number" && Number.isFinite(repeatPenalty) && repeatPenalty > 0) {
+			nativeOptions.repeat_penalty = repeatPenalty;
+		}
+
+		const numPredict =
+			requestMeta.num_predict ??
+			modelAny.numPredict ??
+			modelAny.num_predict ??
+			configOptions.num_predict;
+		if (typeof numPredict === "number" && Number.isFinite(numPredict)) {
+			nativeOptions.num_predict = Math.floor(numPredict);
+		}
+
+		const numGpu =
+			requestMeta.num_gpu ??
+			modelAny.numGpu ??
+			modelAny.num_gpu ??
+			configOptions.num_gpu;
+		if (typeof numGpu === "number" && Number.isFinite(numGpu) && numGpu >= 0) {
+			nativeOptions.num_gpu = Math.floor(numGpu);
+		}
+
+		const think = resolveOllamaThink(input);
+		const bucketOptions: Record<string, unknown> = {
+			options: nativeOptions,
+			...(think === undefined ? {} : { think }),
 		};
 		return {
 			ollama: bucketOptions,
@@ -510,6 +634,7 @@ const routedGlmReasoningRule: ProviderOptionRule = {
  */
 export const PROVIDER_OPTION_RULES: ReadonlyArray<ProviderOptionRule> = [
 	directAnthropicProviderRule,
+	routedAnthropicProviderFallbackRule,
 	directGoogleProviderRule,
 	openAiAdapterRule,
 	openAiCodexRule,

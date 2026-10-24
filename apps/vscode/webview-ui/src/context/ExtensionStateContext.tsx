@@ -26,6 +26,11 @@ import {
 	applyMessage as reducerApplyMessage,
 	applyStateSnapshot as reducerApplyStateSnapshot,
 } from "../components/chat/chat-view/messageReducer"
+import {
+	createSettingsNavigationRequest,
+	type SettingsNavigationRequest,
+	type SettingsNavigationTarget,
+} from "../components/settings/settingsTargets"
 import { McpServiceClient, ModelsServiceClient, StateServiceClient, UiServiceClient } from "../services/grpc-client"
 
 export type ProviderId = string
@@ -45,6 +50,8 @@ interface ProviderModelsState {
 
 export interface ExtensionStateContextType extends ExtensionState {
 	didHydrateState: boolean
+	hydrationError?: string
+	retryHydrateState?: () => void
 	showWelcome: boolean
 	onboardingModels: OnboardingModelGroup | undefined
 	openRouterModels: Record<string, ModelInfo>
@@ -70,7 +77,7 @@ export interface ExtensionStateContextType extends ExtensionState {
 	showMcp: boolean
 	mcpTab?: McpViewTab
 	showSettings: boolean
-	settingsTargetSection?: string
+	settingsNavigationRequest?: SettingsNavigationRequest
 	settingsInitialModelTab?: "recommended" | "free"
 	showHistory: boolean
 	showAccount: boolean
@@ -119,8 +126,11 @@ export interface ExtensionStateContextType extends ExtensionState {
 	// Navigation functions
 	navigateToMarketplace: () => void
 	navigateToMcp: (tab?: McpViewTab) => void
-	navigateToSettings: (targetSection?: string) => void
-	navigateToSettingsModelPicker: (opts: { targetSection?: string; initialModelTab?: "recommended" | "free" }) => void
+	navigateToSettings: (targetSection?: SettingsNavigationTarget) => void
+	navigateToSettingsModelPicker: (opts: {
+		targetSection?: SettingsNavigationTarget
+		initialModelTab?: "recommended" | "free"
+	}) => void
 	navigateToHistory: () => void
 	navigateToAccount: () => void
 	navigateToWorktrees: () => void
@@ -136,7 +146,6 @@ export interface ExtensionStateContextType extends ExtensionState {
 	closeMcpView: () => void
 
 	// Event callbacks
-	onRelinquishControl: (callback: () => void) => () => void
 }
 
 export const ExtensionStateContext = createContext<ExtensionStateContextType | undefined>(undefined)
@@ -149,7 +158,7 @@ export const ExtensionStateContextProvider: React.FC<{
 	const [showMcp, setShowMcp] = useState(false)
 	const [mcpTab, setMcpTab] = useState<McpViewTab | undefined>(undefined)
 	const [showSettings, setShowSettings] = useState(false)
-	const [settingsTargetSection, setSettingsTargetSection] = useState<string | undefined>(undefined)
+	const [settingsNavigationRequest, setSettingsNavigationRequest] = useState<SettingsNavigationRequest | undefined>(undefined)
 	const [settingsInitialModelTab, setSettingsInitialModelTab] = useState<"recommended" | "free" | undefined>(undefined)
 	const [showHistory, setShowHistory] = useState(false)
 	const [showAccount, setShowAccount] = useState(false)
@@ -168,7 +177,7 @@ export const ExtensionStateContextProvider: React.FC<{
 	// Hide functions
 	const hideSettings = useCallback(() => {
 		setShowSettings(false)
-		setSettingsTargetSection(undefined)
+		setSettingsNavigationRequest(undefined)
 		setSettingsInitialModelTab(undefined)
 	}, [])
 	const hideHistory = useCallback(() => setShowHistory(false), [setShowHistory])
@@ -202,13 +211,13 @@ export const ExtensionStateContextProvider: React.FC<{
 	}, [closeMcpView])
 
 	const navigateToSettings = useCallback(
-		(targetSection?: string) => {
+		(targetSection?: SettingsNavigationTarget) => {
 			closeMarketplaceView()
 			setShowHistory(false)
 			closeMcpView()
 			setShowAccount(false)
 			setShowWorktrees(false)
-			setSettingsTargetSection(targetSection)
+			setSettingsNavigationRequest(targetSection ? createSettingsNavigationRequest(targetSection) : undefined)
 			setSettingsInitialModelTab(undefined)
 			setShowSettings(true)
 		},
@@ -216,13 +225,13 @@ export const ExtensionStateContextProvider: React.FC<{
 	)
 
 	const navigateToSettingsModelPicker = useCallback(
-		(opts: { targetSection?: string; initialModelTab?: "recommended" | "free" }) => {
+		(opts: { targetSection?: SettingsNavigationTarget; initialModelTab?: "recommended" | "free" }) => {
 			closeMarketplaceView()
 			setShowHistory(false)
 			closeMcpView()
 			setShowAccount(false)
 			setShowWorktrees(false)
-			setSettingsTargetSection(opts.targetSection)
+			setSettingsNavigationRequest(opts.targetSection ? createSettingsNavigationRequest(opts.targetSection) : undefined)
 			setSettingsInitialModelTab(opts.initialModelTab)
 			setShowSettings(true)
 		},
@@ -302,6 +311,8 @@ export const ExtensionStateContextProvider: React.FC<{
 		webSearchEnabled: false,
 		subagentsEnabled: false,
 		worktreesEnabled: { user: true, featureFlag: false },
+		cloudSessionsAvailable: false,
+		cloudSessionsEnabled: false,
 		favoritedModelIds: [],
 		lastDismissedInfoBannerVersion: 0,
 		lastDismissedModelBannerVersion: 0,
@@ -326,6 +337,7 @@ export const ExtensionStateContextProvider: React.FC<{
 	})
 	const [expandTaskHeader, setExpandTaskHeader] = useState(true)
 	const [didHydrateState, setDidHydrateState] = useState(false)
+	const [hydrationError, setHydrationError] = useState<string | undefined>(undefined)
 
 	const [showWelcome, setShowWelcome] = useState(false)
 	const [onboardingModels, setOnboardingModels] = useState<OnboardingModelGroup | undefined>(undefined)
@@ -423,27 +435,18 @@ export const ExtensionStateContextProvider: React.FC<{
 	const openRouterModelsUnsubscribeRef = useRef<(() => void) | null>(null)
 	const liteLlmModelsUnsubscribeRef = useRef<(() => void) | null>(null)
 	const workspaceUpdatesUnsubscribeRef = useRef<(() => void) | null>(null)
-	const relinquishControlUnsubscribeRef = useRef<(() => void) | null>(null)
-
-	// Add ref for callbacks
-	const relinquishControlCallbacks = useRef<Set<() => void>>(new Set())
-
-	// Create hook function
-	const onRelinquishControl = useCallback((callback: () => void) => {
-		relinquishControlCallbacks.current.add(callback)
-		return () => {
-			relinquishControlCallbacks.current.delete(callback)
-		}
-	}, [])
 	const mcpServersSubscriptionRef = useRef<(() => void) | null>(null)
 	// Convergent-replica state for clineMessages. The partial-message stream and the full state
 	// snapshots both feed this reducer so the transcript converges correctly regardless of
 	// arrival order, duplication, or loss. See messageReducer.ts.
 	const replicaRef = useRef<ReplicaState>(createReplicaState())
 
-	// Subscribe to state updates and UI events using the gRPC streaming API
-	useEffect(() => {
-		// Set up state subscription
+	const setupStateSubscription = useCallback(() => {
+		if (stateSubscriptionRef.current) {
+			stateSubscriptionRef.current()
+			stateSubscriptionRef.current = null
+		}
+		setHydrationError(undefined)
 		stateSubscriptionRef.current = StateServiceClient.subscribeToState(EmptyRequest.create({}), {
 			onResponse: (response: any) => {
 				if (response.stateJson) {
@@ -490,23 +493,48 @@ export const ExtensionStateContextProvider: React.FC<{
 							}
 
 							setDidHydrateState(true)
+							setHydrationError(undefined)
 
 							return newState
 						})
 					} catch (error) {
 						console.error("Error parsing state JSON:", error)
 						console.log("[DEBUG] ERR getting state", error)
+						setHydrationError("Failed to parse state from extension host")
 					}
 				}
 				console.log('[DEBUG] ended "got subscribed state"')
 			},
 			onError: (error: any) => {
 				console.error("Error in state subscription:", error)
+				setHydrationError(error?.message || "Connection to Cline extension host failed")
 			},
 			onComplete: () => {
 				console.log("State subscription completed")
 			},
 		})
+	}, [showWelcome])
+
+	const retryHydrateState = useCallback(() => {
+		setupStateSubscription()
+	}, [setupStateSubscription])
+
+	useEffect(() => {
+		if (didHydrateState) {
+			return
+		}
+		const timer = setTimeout(() => {
+			if (!didHydrateState) {
+				setHydrationError((prev) => prev ?? "Connecting to Cline extension host is taking longer than expected.")
+			}
+		}, 8000)
+		return () => clearTimeout(timer)
+	}, [didHydrateState])
+
+	// Subscribe to state updates and UI events using the gRPC streaming API
+	useEffect(() => {
+		// Set up state subscription
+		setupStateSubscription()
 
 		// Subscribe to MCP button clicked events with webview type
 		mcpButtonUnsubscribeRef.current = UiServiceClient.subscribeToMcpButtonClicked(
@@ -620,6 +648,29 @@ export const ExtensionStateContextProvider: React.FC<{
 		)
 
 		// Subscribe to partial message events
+		let throttleTimer: ReturnType<typeof setTimeout> | null = null
+		let pendingRaf: number | null = null
+		let lastFlushTime = 0
+		const THROTTLE_MS = 30
+
+		const flushPendingUpdate = () => {
+			if (throttleTimer) {
+				clearTimeout(throttleTimer)
+				throttleTimer = null
+			}
+			if (pendingRaf !== null) {
+				cancelAnimationFrame(pendingRaf)
+				pendingRaf = null
+			}
+			lastFlushTime = performance.now()
+			setState((prevState) => {
+				if (prevState.clineMessages === replicaRef.current.messages) {
+					return prevState
+				}
+				return { ...prevState, clineMessages: replicaRef.current.messages }
+			})
+		}
+
 		partialMessageUnsubscribeRef.current = UiServiceClient.subscribeToPartialMessage(EmptyRequest.create({}), {
 			onResponse: (protoMessage: any) => {
 				try {
@@ -630,19 +681,44 @@ export const ExtensionStateContextProvider: React.FC<{
 					}
 
 					const partialMessage = convertProtoToClineMessage(protoMessage)
-					setState((prevState) => {
-						// Route through the convergent-replica reducer: merge by ts keeping the
-						// higher seq, fence stale epochs, never let an out-of-order or duplicate
-						// delivery corrupt the transcript. Unstamped (classic/legacy) messages
-						// default to epoch 0 and merge by ts as before.
-						const before = replicaRef.current
-						replicaRef.current = reducerApplyMessage(before, partialMessage)
-						if (replicaRef.current === before) {
-							// Stale/ignored — no change.
-							return prevState
+
+					// Route through the convergent-replica reducer synchronously so replicaRef is always current:
+					const before = replicaRef.current
+					replicaRef.current = reducerApplyMessage(before, partialMessage)
+					if (replicaRef.current === before) {
+						// Stale/ignored — no change.
+						return
+					}
+
+					// If the message is complete (not partial), flush immediately to avoid any lag at the end of streaming
+					if (!partialMessage.partial) {
+						flushPendingUpdate()
+						return
+					}
+
+					// For partial / streaming updates, throttle state updates to ~30ms (requestAnimationFrame / 30fps)
+					// to eliminate React render thrashing and IPC message flooding.
+					const now = performance.now()
+					const elapsed = now - lastFlushTime
+
+					if (elapsed >= THROTTLE_MS) {
+						if (pendingRaf === null) {
+							pendingRaf = requestAnimationFrame(() => {
+								pendingRaf = null
+								flushPendingUpdate()
+							})
 						}
-						return { ...prevState, clineMessages: replicaRef.current.messages }
-					})
+					} else if (!throttleTimer) {
+						throttleTimer = setTimeout(() => {
+							throttleTimer = null
+							if (pendingRaf === null) {
+								pendingRaf = requestAnimationFrame(() => {
+									pendingRaf = null
+									flushPendingUpdate()
+								})
+							}
+						}, THROTTLE_MS - elapsed)
+					}
 				} catch (error) {
 					console.error("Failed to process partial message:", error, protoMessage)
 				}
@@ -652,6 +728,7 @@ export const ExtensionStateContextProvider: React.FC<{
 			},
 			onComplete: () => {
 				console.log("[DEBUG] partialMessage subscription completed")
+				flushPendingUpdate()
 			},
 		})
 
@@ -719,20 +796,6 @@ export const ExtensionStateContextProvider: React.FC<{
 				console.error("Failed to fetch available terminal profiles:", error)
 			})
 
-		// Subscribe to relinquish control events
-		relinquishControlUnsubscribeRef.current = UiServiceClient.subscribeToRelinquishControl(EmptyRequest.create({}), {
-			onResponse: () => {
-				// Call all registered callbacks
-				relinquishControlCallbacks.current.forEach((callback) => {
-					callback()
-				})
-			},
-			onError: (error: any) => {
-				console.error("Error in relinquishControl subscription:", error)
-			},
-			onComplete: () => {},
-		})
-
 		// Clean up subscriptions when component unmounts
 		return () => {
 			if (stateSubscriptionRef.current) {
@@ -767,6 +830,14 @@ export const ExtensionStateContextProvider: React.FC<{
 				worktreesButtonClickedSubscriptionRef.current()
 				worktreesButtonClickedSubscriptionRef.current = null
 			}
+			if (throttleTimer) {
+				clearTimeout(throttleTimer)
+				throttleTimer = null
+			}
+			if (pendingRaf !== null) {
+				cancelAnimationFrame(pendingRaf)
+				pendingRaf = null
+			}
 			if (partialMessageUnsubscribeRef.current) {
 				partialMessageUnsubscribeRef.current()
 				partialMessageUnsubscribeRef.current = null
@@ -782,10 +853,6 @@ export const ExtensionStateContextProvider: React.FC<{
 			if (workspaceUpdatesUnsubscribeRef.current) {
 				workspaceUpdatesUnsubscribeRef.current()
 				workspaceUpdatesUnsubscribeRef.current = null
-			}
-			if (relinquishControlUnsubscribeRef.current) {
-				relinquishControlUnsubscribeRef.current()
-				relinquishControlUnsubscribeRef.current = null
 			}
 			if (mcpServersSubscriptionRef.current) {
 				mcpServersSubscriptionRef.current()
@@ -873,6 +940,8 @@ export const ExtensionStateContextProvider: React.FC<{
 	const contextValue: ExtensionStateContextType = {
 		...state,
 		didHydrateState,
+		hydrationError,
+		retryHydrateState,
 		showWelcome,
 		onboardingModels,
 		openRouterModels,
@@ -893,7 +962,7 @@ export const ExtensionStateContextProvider: React.FC<{
 		showMcp,
 		mcpTab,
 		showSettings,
-		settingsTargetSection,
+		settingsNavigationRequest,
 		settingsInitialModelTab,
 		showHistory,
 		showAccount,
@@ -1006,7 +1075,6 @@ export const ExtensionStateContextProvider: React.FC<{
 		refreshVercelAiGatewayModels,
 		refreshHicapModels,
 		refreshLiteLlmModels,
-		onRelinquishControl,
 		setUserInfo: (userInfo?: UserInfo) => setState((prevState) => ({ ...prevState, userInfo })),
 		expandTaskHeader,
 		setExpandTaskHeader,

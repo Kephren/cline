@@ -3,6 +3,9 @@ import type { Mode } from "@shared/storage/types"
 import type { StateManager } from "@/core/storage/StateManager"
 import { toLegacyApiProvider } from "@/shared/model-catalog/provider-helpers"
 import { Logger } from "@/shared/services/Logger"
+import { parseProviderId } from "@/sdk/model-catalog/provider-id"
+import { createProviderConfigStore } from "@/sdk/model-catalog/store"
+import { resolveModelId } from "./cline-session-factory"
 import type { SdkMessageCoordinator } from "./sdk-message-coordinator"
 import type { SdkSessionConfigBuilder } from "./sdk-session-config-builder"
 import type { SdkSessionLifecycle } from "./sdk-session-lifecycle"
@@ -37,27 +40,77 @@ function providerForMode(config: ApiConfiguration, mode: Mode): string | undefin
 	return provider === undefined ? undefined : toLegacyApiProvider(provider)
 }
 
+function resolveActiveTemperature(providerId: string, mode: Mode, modelId: string | undefined): number | undefined {
+	if (!modelId) return undefined
+	try {
+		const parsedProviderId = parseProviderId(providerId)
+		const selection = createProviderConfigStore().readSelection(parsedProviderId, mode)
+		return selection?.overrides?.temperature ?? selection?.modelInfo?.temperature
+	} catch {
+		return undefined
+	}
+}
+
 export class SdkProviderChangeCoordinator {
-	constructor(private readonly options: SdkProviderChangeCoordinatorOptions) {}
+	private lastActiveTemperature: number | undefined
+
+	constructor(private readonly options: SdkProviderChangeCoordinatorOptions) {
+		try {
+			const mode = this.getCurrentMode()
+			const config = this.options.stateManager.getApiConfiguration?.()
+			if (config) {
+				const provider = providerForMode(config, mode)
+				const model = provider ? resolveModelId(provider, mode, config) : undefined
+				this.lastActiveTemperature = provider ? resolveActiveTemperature(provider, mode, model) : undefined
+			}
+		} catch {
+			// ignore initialization errors
+		}
+	}
 
 	handleApiConfigurationChanged(previous: ApiConfiguration, next: ApiConfiguration): void {
 		const mode = this.getCurrentMode()
 		const previousProvider = providerForMode(previous, mode)
 		const nextProvider = providerForMode(next, mode)
 
-		if (previousProvider === nextProvider) {
+		const previousModel = previousProvider ? resolveModelId(previousProvider, mode, previous) : undefined
+		const nextModel = nextProvider ? resolveModelId(nextProvider, mode, next) : undefined
+
+		const providerChanged = previousProvider !== nextProvider
+		const modelChanged = previousModel !== nextModel
+		const contextChanged = previous.ollamaApiOptionsCtxNum !== next.ollamaApiOptionsCtxNum
+		const ollamaReasoningChanged =
+			(previousProvider === "ollama" || nextProvider === "ollama") &&
+			previous.ollamaReasoning !== next.ollamaReasoning
+
+		const currentTemperature = nextProvider ? resolveActiveTemperature(nextProvider, mode, nextModel) : undefined
+		const temperatureChanged =
+			this.lastActiveTemperature !== undefined && this.lastActiveTemperature !== currentTemperature
+		this.lastActiveTemperature = currentTemperature
+
+		if (!providerChanged && !modelChanged && !contextChanged && !temperatureChanged && !ollamaReasoningChanged) {
 			return
 		}
 
 		const activeSession = this.options.sessions.getActiveSession()
 		if (!activeSession) {
-			Logger.log("[SdkController] Provider changed without active session; next task will use new provider")
+			Logger.log(
+				"[SdkController] Provider, model, context, or temperature changed without active session; next task will use new configuration",
+			)
 			return
 		}
 
-		Logger.log(
-			`[SdkController] Active provider changed for ${mode}: ${previousProvider ?? "none"} -> ${nextProvider ?? "none"}`,
-		)
+		const reason = providerChanged
+			? `Active provider changed for ${mode}: ${previousProvider ?? "none"} -> ${nextProvider ?? "none"}`
+			: modelChanged
+				? `Active model changed for ${mode}: ${previousModel ?? "none"} -> ${nextModel ?? "none"}`
+				: contextChanged
+					? `Active context changed for ${mode}: ${previous.ollamaApiOptionsCtxNum ?? "default"} -> ${next.ollamaApiOptionsCtxNum ?? "default"}`
+					: ollamaReasoningChanged
+						? `Active Ollama reasoning changed for ${mode}: ${String(previous.ollamaReasoning)} -> ${String(next.ollamaReasoning)}`
+						: `Active temperature changed for ${mode}: ${currentTemperature ?? "default"}`
+
+		Logger.log(`[SdkController] ${reason}`)
 
 		this.options.rebuilds.request("provider", () => this.restartActiveSessionForProviderChange())
 	}

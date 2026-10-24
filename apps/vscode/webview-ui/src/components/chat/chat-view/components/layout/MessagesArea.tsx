@@ -5,7 +5,6 @@ import { Virtuoso } from "react-virtuoso"
 import ChatRow from "@/components/chat/ChatRow"
 import { StickyUserMessage } from "@/components/chat/task-header/StickyUserMessage"
 import { useExtensionState } from "@/context/ExtensionStateContext"
-import { cn } from "@/lib/utils"
 import { useThinkingLoaderRow } from "../../hooks/useThinkingLoaderRow"
 import type { ChatState, MessageHandlers, ScrollBehavior } from "../../types/chatTypes"
 import { isPendingResponseUnconfirmed } from "../../utils/pendingResponse"
@@ -56,6 +55,7 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 		setIsAtBottom,
 		disableAutoScrollRef,
 		handleRangeChanged,
+		lastUserMessage,
 		scrolledPastUserMessage,
 		scrollToMessage,
 		scrollToBottomSmooth,
@@ -63,20 +63,14 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 		handleLastRowContentChange,
 	} = scrollBehavior
 
-	// Find the index of the scrolled past user message for scrolling
-	const scrolledPastUserMessageIndex = useMemo(() => {
-		if (!scrolledPastUserMessage) {
-			return -1
-		}
-		return clineMessages.findIndex((msg) => msg.ts === scrolledPastUserMessage.ts)
-	}, [clineMessages, scrolledPastUserMessage])
+	const targetUserMessage = lastUserMessage ?? scrolledPastUserMessage
 
-	// Handler to scroll to the scrolled past user message
+	// Handler to scroll to the pinned user message
 	const handleScrollToUserMessage = useCallback(() => {
-		if (scrollToMessage && scrolledPastUserMessageIndex >= 0) {
-			scrollToMessage(scrolledPastUserMessageIndex)
+		if (scrollToMessage && targetUserMessage) {
+			scrollToMessage(targetUserMessage)
 		}
-	}, [scrollToMessage, scrolledPastUserMessageIndex])
+	}, [scrollToMessage, targetUserMessage])
 
 	const { expandedRows, inputValue, setActiveQuote } = chatState
 	const lastVisibleRow = useMemo(() => groupedMessages.at(-1), [groupedMessages])
@@ -140,29 +134,72 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 		if (disableAutoScrollRef.current) {
 			return
 		}
-		scrollToBottomSmooth()
-		// Settle with an instant scroll so late layout shifts can't leave us short of the bottom.
-		// No cleanup: a quick follow-up change would cancel the settle scroll.
-		setTimeout(() => {
-			if (!disableAutoScrollRef.current) {
-				scrollToBottomAuto()
-			}
-		}, 50)
-	}, [displayedGroupedMessages.length, lastTailTs, scrollToBottomSmooth, scrollToBottomAuto, disableAutoScrollRef])
+		const isStreaming = lastRawMessage?.partial === true || turnState?.phase === "streaming"
+		if (isStreaming) {
+			scrollToBottomAuto()
+		} else {
+			scrollToBottomSmooth()
+			// Settle with an instant scroll so late layout shifts can't leave us short of the bottom.
+			// No cleanup: a quick follow-up change would cancel the settle scroll.
+			setTimeout(() => {
+				if (!disableAutoScrollRef.current) {
+					scrollToBottomAuto()
+				}
+			}, 50)
+		}
+	}, [
+		displayedGroupedMessages.length,
+		lastTailTs,
+		scrollToBottomSmooth,
+		scrollToBottomAuto,
+		disableAutoScrollRef,
+		lastRawMessage?.partial,
+		turnState?.phase,
+	])
 
 	// Re-engage auto scroll when a new turn starts streaming. In the old extension every turn start
 	// came from a webview action (send, approve, resume) whose handler reset disableAutoScrollRef;
 	// a turnState-driven start like plan -> act auto-continue has no webview-side action, so reset
 	// it here to keep the old "new turn pins to bottom" behavior.
+	// Re-engage auto scroll when a new turn starts streaming, or when prompt changes/streaming complete.
 	const prevTurnPhaseRef = useRef(turnState?.phase)
+	const prevPartialRef = useRef(lastRawMessage?.partial === true)
 	useEffect(() => {
 		const prevPhase = prevTurnPhaseRef.current
-		prevTurnPhaseRef.current = turnState?.phase
-		if (turnState?.phase === "streaming" && prevPhase !== "streaming") {
+		const wasPartial = prevPartialRef.current
+		const isPartial = lastRawMessage?.partial === true
+		const currentPhase = turnState?.phase
+		prevTurnPhaseRef.current = currentPhase
+		prevPartialRef.current = isPartial
+
+		const startedStreaming = currentPhase === "streaming" && prevPhase !== "streaming"
+		const finishedStreaming =
+			(prevPhase === "streaming" && currentPhase !== "streaming") ||
+			(wasPartial && !isPartial)
+
+		if (startedStreaming) {
 			disableAutoScrollRef.current = false
-			scrollToBottomSmooth()
+			scrollToBottomAuto()
+		} else if (finishedStreaming) {
+			// Once prompt changes are complete, re-engage auto-scroll and scroll to the latest information
+			disableAutoScrollRef.current = false
+			scrollToBottomAuto()
+			const t1 = setTimeout(() => {
+				scrollToBottomAuto()
+			}, 50)
+			const t2 = setTimeout(() => {
+				scrollToBottomAuto()
+			}, 150)
+			const t3 = setTimeout(() => {
+				scrollToBottomAuto()
+			}, 300)
+			return () => {
+				clearTimeout(t1)
+				clearTimeout(t2)
+				clearTimeout(t3)
+			}
 		}
-	}, [turnState?.phase, scrollToBottomSmooth, disableAutoScrollRef])
+	}, [turnState?.phase, lastRawMessage?.partial, scrollToBottomAuto, disableAutoScrollRef])
 
 	const itemContent = useMemo(
 		() =>
@@ -201,18 +238,16 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 
 	return (
 		<div className="overflow-hidden flex flex-col h-full relative">
-			{/* Sticky User Message - positioned absolutely to avoid layout shifts */}
-			<div
-				className={cn(
-					"absolute top-0 left-0 right-0 z-10 pl-[15px] pr-[14px] bg-background",
-					scrolledPastUserMessage && "pb-2",
-				)}>
-				<StickyUserMessage
-					isVisible={!!scrolledPastUserMessage}
-					lastUserMessage={scrolledPastUserMessage}
-					onScrollToMessage={handleScrollToUserMessage}
-				/>
-			</div>
+			{/* Pinned Last Prompt - in-flow so it stays pinned under the task header without obscuring Virtuoso items */}
+			{targetUserMessage && (
+				<div className="shrink-0 z-10 px-4 pb-2 bg-background">
+					<StickyUserMessage
+						isVisible={true}
+						lastUserMessage={targetUserMessage}
+						onScrollToMessage={handleScrollToUserMessage}
+					/>
+				</div>
+			)}
 
 			<div className="grow flex relative" ref={scrollContainerRef}>
 				{/* Empty-list fast path: paint the loader immediately without waiting for the
@@ -228,7 +263,7 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 							isLast={true}
 							lastModifiedMessage={modifiedMessages.at(-1)}
 							message={WAITING_ROW}
-							onCancelCommand={() => messageHandlers.executeButtonAction("cancel")}
+							onCancelCommand={() => messageHandlers.executeButtonAction({ type: "cancel" })}
 							onHeightChange={handleRowHeightChange}
 							onLastRowContentChange={handleLastRowContentChange}
 							onSetQuote={setActiveQuote}

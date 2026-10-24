@@ -9,6 +9,7 @@ import rehypeHighlight, { Options } from "rehype-highlight"
 import remarkGfm from "remark-gfm"
 import type { Node } from "unist"
 import { visit } from "unist-util-visit"
+import type { PluggableList } from "unified"
 import MermaidBlock from "@/components/common/MermaidBlock"
 import { Button } from "@/components/ui/button"
 import { useExtensionState } from "@/context/ExtensionStateContext"
@@ -16,6 +17,26 @@ import { cn } from "@/lib/utils"
 import { FileServiceClient, StateServiceClient } from "@/services/grpc-client"
 import { WithCopyButton } from "./CopyButton"
 import UnsafeImage from "./UnsafeImage"
+
+/**
+ * Detects if a markdown block is an unclosed code block (starts with a code fence
+ * but does not yet contain the matching closing fence).
+ */
+export function isUnclosedCodeBlock(content: string): boolean {
+	const trimmed = content.trimStart()
+	const match = trimmed.match(/^(```+|~~~+)/)
+	if (!match) {
+		return false
+	}
+	const fence = match[1]
+	const trimmedEnd = content.trimEnd()
+	const lines = trimmedEnd.split("\n")
+	if (lines.length <= 1) {
+		return true
+	}
+	const lastLine = lines[lines.length - 1].trim()
+	return !lastLine.startsWith(fence)
+}
 
 function parseMarkdownIntoBlocks(markdown: string): string[] {
 	try {
@@ -27,7 +48,18 @@ function parseMarkdownIntoBlocks(markdown: string): string[] {
 }
 
 const MemoizedMarkdownBlock = memo(
-	({ content }: { content: string }) => {
+	({ content, isStreaming }: { content: string; isStreaming?: boolean }) => {
+		const isUnclosed = isUnclosedCodeBlock(content)
+		// Defer syntax highlighting on active/unclosed code blocks while streaming
+		// to eliminate color flashing and DOM thrashing from incomplete syntax parsing.
+		const shouldDeferHighlighting = isUnclosed && isStreaming !== false
+		const rehypePlugins = useMemo<PluggableList>(() => {
+			if (shouldDeferHighlighting) {
+				return []
+			}
+			return [[rehypeHighlight as any, {} as Options]]
+		}, [shouldDeferHighlighting])
+
 		return (
 			<ReactMarkdown
 				components={{
@@ -76,7 +108,7 @@ const MemoizedMarkdownBlock = memo(
 					},
 					img: (props) => <UnsafeImage {...props} />,
 				}}
-				rehypePlugins={[[rehypeHighlight as any, {} as Options]]}
+				rehypePlugins={rehypePlugins}
 				remarkPlugins={[
 					[remarkGfm, { singleTilde: false }],
 					remarkPreventBoldFilenames,
@@ -101,15 +133,22 @@ const MemoizedMarkdownBlock = memo(
 	},
 	(prevProps, nextProps) => {
 		if (prevProps.content !== nextProps.content) return false
+		if (prevProps.isStreaming !== nextProps.isStreaming) return false
 		return true
 	},
 )
 
 MemoizedMarkdownBlock.displayName = "MemoizedMarkdownBlock"
 
-const MemoizedMarkdown = memo(({ content, id }: { content: string; id: string }) => {
+const MemoizedMarkdown = memo(({ content, id, isStreaming }: { content: string; id: string; isStreaming?: boolean }) => {
 	const blocks = useMemo(() => parseMarkdownIntoBlocks(content), [content])
-	return blocks?.map((block, index) => <MemoizedMarkdownBlock content={block} key={`${id}-block_${index}`} />)
+	return blocks?.map((block, index) => (
+		<MemoizedMarkdownBlock
+			content={block}
+			isStreaming={isStreaming}
+			key={`${id}-block_${index}`}
+		/>
+	))
 })
 
 MemoizedMarkdown.displayName = "MemoizedMarkdown"
@@ -149,6 +188,7 @@ interface MarkdownBlockProps {
 	markdown?: string
 	compact?: boolean
 	showCursor?: boolean
+	isStreaming?: boolean
 }
 
 /**
@@ -411,7 +451,7 @@ const InlineCodeWithFileCheck: React.FC<ComponentProps<"code"> & { [key: string]
 	return <code {...props} />
 }
 
-const MarkdownBlock = memo(({ markdown, compact, showCursor }: MarkdownBlockProps) => {
+const MarkdownBlock = memo(({ markdown, compact, showCursor, isStreaming }: MarkdownBlockProps) => {
 	return (
 		<div className="inline-markdown-block">
 			<span
@@ -419,7 +459,7 @@ const MarkdownBlock = memo(({ markdown, compact, showCursor }: MarkdownBlockProp
 					"inline-cursor-container": showCursor,
 					"[&>p]:m-0": compact,
 				})}>
-				{markdown ? <MemoizedMarkdown content={markdown} id="markdown-block" /> : markdown}
+				{markdown ? <MemoizedMarkdown content={markdown} id="markdown-block" isStreaming={isStreaming} /> : markdown}
 			</span>
 		</div>
 	)

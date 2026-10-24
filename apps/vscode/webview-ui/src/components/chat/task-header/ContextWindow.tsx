@@ -1,10 +1,8 @@
-import { StringRequest } from "@shared/proto/cline/common"
 import { VSCodeButton } from "@vscode/webview-ui-toolkit/react"
 import debounce from "debounce"
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card"
 import { Progress } from "@/components/ui/progress"
-import { SlashServiceClient } from "@/services/grpc-client"
 import { formatLargeNumber as formatTokenNumber } from "@/utils/format"
 import CompactTaskButton from "./buttons/CompactTaskButton"
 import { ContextWindowSummary } from "./ContextWindowSummary"
@@ -22,6 +20,8 @@ interface ContextWindowProgressProps extends ContextWindowInfoProps {
 	useAutoCondense: boolean
 	lastApiReqTotalTokens?: number
 	contextWindow?: number
+	compactDisabled: boolean
+	compactTask: () => Promise<boolean>
 	onSendMessage?: (command: string, files: string[], images: string[]) => void
 }
 
@@ -59,6 +59,8 @@ ConfirmationDialog.displayName = "ConfirmationDialog"
 
 const ContextWindow: React.FC<ContextWindowProgressProps> = ({
 	contextWindow = 0,
+	compactDisabled,
+	compactTask,
 	lastApiReqTotalTokens = 0,
 	onSendMessage,
 	useAutoCondense,
@@ -80,18 +82,15 @@ const ContextWindow: React.FC<ContextWindowProgressProps> = ({
 		[confirmationNeeded],
 	)
 
-	const handleConfirm = useCallback((e: React.MouseEvent) => {
-		e.preventDefault()
-		e.stopPropagation()
-		// Trigger a real SDK manual compaction rather than sending the literal
-		// text "/compact" to the model (which it would treat as a normal prompt
-		// and improvise a fake summary — CLINE-2503). The condense RPC runs the
-		// same SDK compaction effect as the CLI's `/compact` command.
-		SlashServiceClient.condense(StringRequest.create({ value: "compact" })).catch((err) =>
-			console.error("Failed to compact task:", err),
-		)
-		setConfirmationNeeded(false)
-	}, [])
+	const handleConfirm = useCallback(
+		(e: React.MouseEvent) => {
+			e.preventDefault()
+			e.stopPropagation()
+			void compactTask().catch((err) => console.error("Failed to compact task:", err))
+			setConfirmationNeeded(false)
+		},
+		[compactTask],
+	)
 
 	const handleCancel = useCallback((e: React.MouseEvent) => {
 		e.preventDefault()
@@ -146,11 +145,15 @@ const ContextWindow: React.FC<ContextWindowProgressProps> = ({
 		return null
 	}
 
+	const totalTokens = (tokensIn || 0) + (tokensOut || 0) + (cacheWrites || 0) + (cacheReads || 0)
+
 	return (
 		<div className="flex flex-col mt-1.5" onMouseLeave={debounceCloseHover}>
 			<div className="flex gap-1 flex-row @max-xs:flex-col @max-xs:items-start items-center text-sm">
-				<div className="flex items-center gap-1.5 flex-1 whitespace-nowrap">
-					<span className="cursor-pointer text-sm" title="Current tokens used in this request">
+				<div className="flex items-center gap-1.5 flex-1 whitespace-nowrap min-w-0">
+					<span
+						className="cursor-pointer text-sm"
+						title={`Current request context tokens: ${tokenData.used.toLocaleString()} (${formatTokenNumber(tokenData.used)})`}>
 						{formatTokenNumber(tokenData.used)}
 					</span>
 					<div className="flex relative items-center gap-1 flex-1 w-full h-full" onMouseEnter={() => setIsOpened(true)}>
@@ -183,11 +186,18 @@ const ContextWindow: React.FC<ContextWindowProgressProps> = ({
 							</HoverCardTrigger>
 						</HoverCard>
 					</div>
-					<span className="cursor-pointer text-sm" title="Maximum context window size for this model">
+					<span
+						className="cursor-pointer text-sm"
+						title={`Maximum context window size for this model: ${tokenData.max.toLocaleString()} (${formatTokenNumber(tokenData.max)})`}>
 						{formatTokenNumber(tokenData.max)}
 					</span>
+					<span
+						className="cursor-pointer text-xs text-description border-l border-[var(--vscode-widget-border,var(--vscode-border))] pl-1.5 ml-0.5 shrink-0"
+						title={`Total tokens used in this session: ${totalTokens.toLocaleString()} (${formatTokenNumber(totalTokens)})`}>
+						Total: {formatTokenNumber(totalTokens)}
+					</span>
 				</div>
-				<CompactTaskButton onClick={handleCompactClick} />
+				<CompactTaskButton disabled={compactDisabled} onClick={handleCompactClick} />
 			</div>
 			{confirmationNeeded && <ConfirmationDialog onCancel={handleCancel} onConfirm={handleConfirm} />}
 		</div>

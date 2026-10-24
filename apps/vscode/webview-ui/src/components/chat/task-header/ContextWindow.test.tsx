@@ -1,21 +1,7 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { fireEvent, render, screen } from "@testing-library/react"
 import type { ButtonHTMLAttributes, PropsWithChildren } from "react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import ContextWindow from "./ContextWindow"
-
-const condense = vi.fn().mockResolvedValue(undefined)
-
-vi.mock("@/services/grpc-client", () => ({
-	SlashServiceClient: {
-		condense: (request: unknown) => condense(request),
-	},
-}))
-
-vi.mock("@shared/proto/cline/common", () => ({
-	StringRequest: {
-		create: (request: unknown) => request,
-	},
-}))
 
 vi.mock("@vscode/webview-ui-toolkit/react", () => ({
 	VSCodeButton: ({ children, ...props }: PropsWithChildren<ButtonHTMLAttributes<HTMLButtonElement>>) => (
@@ -49,19 +35,63 @@ vi.mock("@/components/ui/button", () => ({
 	),
 }))
 
-describe("ContextWindow compact button", () => {
-	beforeEach(() => {
-		condense.mockClear()
+vi.mock("@/services/grpc-client", () => ({
+	SlashServiceClient: {
+		condense: vi.fn().mockResolvedValue({}),
+	},
+}))
+
+describe("ContextWindow", () => {
+	beforeEach(() => vi.clearAllMocks())
+
+	it("renders context used, maximum, and total session tokens", () => {
+		render(
+			<ContextWindow
+				cacheReads={500}
+				cacheWrites={1500}
+				contextWindow={200_000}
+				lastApiReqTotalTokens={25_000}
+				tokensIn={10_000}
+				tokensOut={5_000}
+				useAutoCondense={false}
+			/>,
+		)
+
+		// Context used
+		expect(screen.getByText("25.0k")).toBeInTheDocument()
+		// Maximum context window
+		expect(screen.getByText("200.0k")).toBeInTheDocument()
+		// Total tokens: 10,000 + 5,000 + 1,500 + 500 = 17,000 -> 17.0k
+		expect(screen.getByText("Total: 17.0k")).toBeInTheDocument()
 	})
 
-	it("runs the compact RPC after confirmation instead of sending /compact as a message", async () => {
+	it("returns null if contextWindow is not provided or 0", () => {
+		const { container } = render(
+			<ContextWindow
+				contextWindow={0}
+				lastApiReqTotalTokens={25_000}
+				tokensIn={10_000}
+				tokensOut={5_000}
+				useAutoCondense={false}
+			/>,
+		)
+
+		expect(container.firstChild).toBeNull()
+	})
+
+	it("runs the shared compact handler after confirmation instead of sending /compact as a message", () => {
+		const compactTask = vi.fn().mockResolvedValue(true)
 		const onSendMessage = vi.fn()
 
 		render(
 			<ContextWindow
+				compactDisabled={false}
+				compactTask={compactTask}
 				contextWindow={200_000}
-				lastApiReqTotalTokens={120_000}
+				lastApiReqTotalTokens={25_000}
 				onSendMessage={onSendMessage}
+				tokensIn={10_000}
+				tokensOut={5_000}
 				useAutoCondense={false}
 			/>,
 		)
@@ -69,7 +99,21 @@ describe("ContextWindow compact button", () => {
 		fireEvent.click(screen.getByRole("button", { name: /compact task/i }))
 		fireEvent.click(screen.getByRole("button", { name: /^compact$/i }))
 
-		await waitFor(() => expect(condense).toHaveBeenCalledWith({ value: "compact" }))
+		expect(compactTask).toHaveBeenCalledTimes(1)
 		expect(onSendMessage).not.toHaveBeenCalled()
+	})
+
+	it("disables compaction during API error recovery", () => {
+		render(
+			<ContextWindow
+				compactDisabled={true}
+				compactTask={vi.fn()}
+				contextWindow={200_000}
+				lastApiReqTotalTokens={120_000}
+				useAutoCondense={false}
+			/>,
+		)
+
+		expect(screen.getByRole("button", { name: /compact task/i })).toBeDisabled()
 	})
 })

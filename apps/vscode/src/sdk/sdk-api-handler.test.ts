@@ -1,4 +1,6 @@
+import { CORE_BUILD_VERSION } from "@cline/core"
 import { beforeEach, describe, expect, it, vi } from "vitest"
+import { version as extensionVersion } from "../../package.json"
 import { buildSdkProviderConfig } from "./sdk-api-handler"
 
 const mocks = vi.hoisted(() => {
@@ -104,6 +106,84 @@ describe("buildSdkProviderConfig", () => {
 		})
 	})
 
+	it("attaches the Cline surface headers for Cline billing providers", () => {
+		mocks.providerSettingsManager.getProviderSettings.mockReturnValue({
+			provider: "cline",
+			apiKey: "cline-token",
+		})
+
+		const providerConfig = buildSdkProviderConfig(
+			{
+				actModeApiProvider: "cline",
+				actModeApiModelId: "deepseek/deepseek-v4-flash",
+			},
+			"act",
+			{
+				client: {
+					name: "VSCode Extension",
+					version: "4.1.16",
+					platform: "Visual Studio Code",
+					platformVersion: "1.109.0",
+					isMultiRoot: false,
+				},
+			},
+		)
+
+		expect(providerConfig.headers).toMatchObject({
+			"HTTP-Referer": "https://cline.bot",
+			"X-Title": "Cline",
+			"User-Agent": "Cline/4.1.16",
+			"X-IS-MULTIROOT": "false",
+			"X-CLIENT-TYPE": "VSCode Extension",
+			"X-CLIENT-VERSION": "4.1.16",
+			"X-PLATFORM": "Visual Studio Code",
+			"X-PLATFORM-VERSION": "1.109.0",
+		})
+		// A standalone handler is not a task, so no task id is claimed.
+		expect(providerConfig.headers && "X-Task-ID" in providerConfig.headers).toBe(false)
+	})
+
+	it("attaches the Cline surface headers for ClinePass", () => {
+		mocks.providerSettingsManager.getProviderSettings.mockReturnValue({
+			provider: "cline",
+			auth: { accessToken: "workos:shared-cline-token" },
+		})
+
+		const providerConfig = buildSdkProviderConfig(
+			{
+				actModeApiProvider: "cline-pass",
+				actModeClinePassModelId: "cline-pass/glm-5.2",
+			},
+			"act",
+		)
+
+		// Without a resolved host context the extension's own identity is used.
+		expect(providerConfig.headers).toMatchObject({
+			"X-CLIENT-TYPE": "VSCode Extension",
+			"X-CLIENT-VERSION": extensionVersion,
+			"X-CORE-VERSION": CORE_BUILD_VERSION,
+			"User-Agent": `Cline/${extensionVersion}`,
+		})
+	})
+
+	it("does not attach Cline surface headers to other providers, but keeps their stored headers", () => {
+		mocks.providerSettingsManager.getProviderSettings.mockReturnValue({
+			provider: "anthropic",
+			apiKey: "sk-ant",
+			headers: { "x-custom": "kept" },
+		})
+
+		const providerConfig = buildSdkProviderConfig(
+			{
+				actModeApiProvider: "anthropic",
+				actModeApiModelId: "claude-sonnet-5",
+			},
+			"act",
+		)
+
+		expect(providerConfig.headers).toEqual({ "x-custom": "kept" })
+	})
+
 	it("omits timeoutMs for Ollama when no explicit timeout is configured", () => {
 		mocks.providerSettingsManager.getProviderSettings.mockReturnValue(undefined)
 
@@ -117,5 +197,56 @@ describe("buildSdkProviderConfig", () => {
 
 		expect(providerConfig.providerId).toBe("ollama")
 		expect("timeoutMs" in providerConfig).toBe(false)
+	})
+
+	it("disables thinking for Ollama when ollamaReasoning is false even if actModeReasoningEffort is xhigh", () => {
+		mocks.providerSettingsManager.getProviderSettings.mockReturnValue(undefined)
+
+		const providerConfig = buildSdkProviderConfig(
+			{
+				actModeApiProvider: "ollama",
+				actModeOllamaModelId: "hf.co/unsloth/Devstral-Small-2507-GGUF:Q4_0",
+				actModeReasoningEffort: "xhigh",
+				ollamaReasoning: false,
+			},
+			"act",
+		)
+
+		expect(providerConfig.providerId).toBe("ollama")
+		expect(providerConfig.thinking).toBe(false)
+		expect("reasoningEffort" in providerConfig).toBe(false)
+	})
+
+	it("disables thinking for non-reasoning Ollama model when ollamaReasoning is undefined", () => {
+		mocks.providerSettingsManager.getProviderSettings.mockReturnValue(undefined)
+
+		const providerConfig = buildSdkProviderConfig(
+			{
+				actModeApiProvider: "ollama",
+				actModeOllamaModelId: "hf.co/unsloth/Devstral-Small-2507-GGUF:Q4_0",
+				actModeReasoningEffort: "xhigh",
+			},
+			"act",
+		)
+
+		expect(providerConfig.providerId).toBe("ollama")
+		expect(providerConfig.thinking).toBe(false)
+		expect("reasoningEffort" in providerConfig).toBe(false)
+	})
+
+	it("enables thinking for Ollama when ollamaReasoning is true", () => {
+		mocks.providerSettingsManager.getProviderSettings.mockReturnValue(undefined)
+
+		const providerConfig = buildSdkProviderConfig(
+			{
+				actModeApiProvider: "ollama",
+				actModeOllamaModelId: "hf.co/unsloth/Devstral-Small-2507-GGUF:Q4_0",
+				ollamaReasoning: true,
+			},
+			"act",
+		)
+
+		expect(providerConfig.providerId).toBe("ollama")
+		expect(providerConfig.thinking).toBe(true)
 	})
 })

@@ -9,7 +9,7 @@ import {
 } from "@shared/api"
 import { BrowserSettings, DEFAULT_BROWSER_SETTINGS } from "@shared/BrowserSettings"
 import { ClineRulesToggles } from "@shared/cline-rules"
-import { DEFAULT_FOCUS_CHAIN_SETTINGS, FocusChainSettings } from "@shared/FocusChainSettings"
+import type { CloudTaskTargetSelection, RememberedCloudStatuses } from "@shared/cloud/cloud-sessions"
 import { HistoryItem } from "@shared/HistoryItem"
 import { DEFAULT_MCP_DISPLAY_MODE, McpDisplayMode } from "@shared/McpDisplayMode"
 import { toLegacyApiProvider } from "@shared/model-catalog/provider-helpers"
@@ -95,6 +95,10 @@ const GLOBAL_STATE_FIELDS = {
 	remoteWorkflowToggles: { default: {} as ClineRulesToggles },
 	remoteSkillsToggles: { default: {} as ClineRulesToggles },
 	dismissedBanners: { default: [] as Array<{ bannerId: string; dismissedAt: number }> },
+	// Last Local/Cloud choice (and repository) picked on the home screen for new tasks
+	cloudTaskTarget: { default: undefined as CloudTaskTargetSelection | undefined },
+	// Last agent status confirmed over a live connection, per cloud session id
+	cloudSessionStatuses: { default: {} as RememberedCloudStatuses },
 	// Path to worktree that should auto-open Cline sidebar when launched
 	worktreeAutoOpenPath: { default: undefined as string | undefined },
 } satisfies FieldDefinitions
@@ -121,6 +125,19 @@ const API_HANDLER_SETTINGS_FIELDS = {
 	openAiBaseUrl: { default: undefined as string | undefined },
 	ollamaBaseUrl: { default: undefined as string | undefined },
 	ollamaApiOptionsCtxNum: { default: undefined as string | undefined },
+	ollamaTemperature: { default: undefined as number | undefined },
+	ollamaMinP: { default: undefined as number | undefined },
+	ollamaSeedEnabled: { default: undefined as boolean | undefined },
+	ollamaSeedValue: { default: undefined as number | undefined },
+	ollamaReasoning: { default: undefined as boolean | undefined },
+	ollamaIsTuned: { default: undefined as boolean | undefined },
+	ollamaTunedContextSize: { default: undefined as number | undefined },
+	ollamaTunedModel: { default: undefined as string | undefined },
+	ollamaNumPredict: { default: undefined as number | undefined },
+	ollamaNumGpu: { default: undefined as number | undefined },
+	ollamaTopP: { default: undefined as number | undefined },
+	ollamaTopK: { default: undefined as number | undefined },
+	ollamaRepeatPenalty: { default: undefined as number | undefined },
 	lmStudioBaseUrl: { default: undefined as string | undefined },
 	lmStudioMaxTokens: { default: undefined as string | undefined },
 	geminiBaseUrl: { default: undefined as string | undefined },
@@ -277,9 +294,9 @@ const USER_SETTINGS_FIELDS = {
 	useAutoCondense: { default: true as boolean },
 	subagentsEnabled: { default: false as boolean },
 	worktreesEnabled: { default: false as boolean },
+	cloudSessionsEnabled: { default: false as boolean },
 	preferredLanguage: { default: "English" as string },
 	mode: { default: "act" as Mode },
-	focusChainSettings: { default: DEFAULT_FOCUS_CHAIN_SETTINGS as FocusChainSettings },
 	backgroundEditEnabled: { default: false as boolean },
 	optOutOfRemoteConfig: { default: false as boolean },
 	showFeatureTips: { default: false as boolean },

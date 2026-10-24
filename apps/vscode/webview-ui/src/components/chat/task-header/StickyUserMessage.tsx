@@ -1,4 +1,5 @@
 import { ClineMessage } from "@shared/ExtensionMessage"
+import { PaperclipIcon, PinIcon } from "lucide-react"
 import React, { memo, useCallback } from "react"
 import { cn } from "@/lib/utils"
 import { highlightText } from "./Highlights"
@@ -6,15 +7,16 @@ import { highlightText } from "./Highlights"
 interface StickyUserMessageProps {
 	readonly lastUserMessage: ClineMessage | null
 	readonly onScrollToMessage?: () => void
-	readonly isVisible: boolean
+	readonly isVisible?: boolean
 }
 
 /**
- * A sticky header component that displays the last user message
- * Shows when user scrolls down, allowing quick navigation back to their message
+ * A pinned header component that displays the last user message/prompt
+ * Pinned at the top of the chat area just below the task header,
+ * allowing quick navigation back to the user's prompt in multi-step workflows.
  */
 export const StickyUserMessage: React.FC<StickyUserMessageProps> = memo(
-	({ lastUserMessage, onScrollToMessage, isVisible }) => {
+	({ lastUserMessage, onScrollToMessage, isVisible = true }) => {
 		const handleClick = useCallback(() => {
 			if (onScrollToMessage) {
 				onScrollToMessage()
@@ -33,21 +35,26 @@ export const StickyUserMessage: React.FC<StickyUserMessageProps> = memo(
 			[onScrollToMessage],
 		)
 
-		// Don't render if no user message or not visible
-		if (!lastUserMessage?.text || !isVisible) {
+		const hasImages = (lastUserMessage?.images?.length ?? 0) > 0
+		const hasFiles = (lastUserMessage?.files?.length ?? 0) > 0
+		const rawText = lastUserMessage?.text?.trim() || ""
+
+		// Don't render if no user message, not visible, or completely empty
+		if (!lastUserMessage || !isVisible || (!rawText && !hasImages && !hasFiles)) {
 			return null
 		}
 
-		const messageText = lastUserMessage.text.trim()
+		const displayText = rawText || (hasImages ? "(Images)" : "(Files)")
 
 		return (
 			<div
-				aria-label={`Scroll to your message: ${messageText}`}
+				aria-label={`Scroll to prompt: ${displayText}`}
 				className={cn(
-					"relative flex items-center px-2.5 pt-2 pb-2 cursor-pointer select-none",
-					"backdrop-blur-sm",
+					"relative flex items-center px-2.5 py-1.5 cursor-pointer select-none",
+					"backdrop-blur-sm transition-all",
 					"hover:brightness-110",
 				)}
+				data-testid="pinned-last-prompt"
 				onClick={handleClick}
 				onKeyDown={handleKeyDown}
 				role="button"
@@ -56,16 +63,22 @@ export const StickyUserMessage: React.FC<StickyUserMessageProps> = memo(
 					borderRadius: "3px",
 				}}
 				tabIndex={0}
-				title="Click to scroll to your message">
-				{/* Message text (truncated via CSS text-ellipsis) */}
+				title={`Click to scroll to prompt:\n${displayText}`}>
+				<PinIcon className="w-3.5 h-3.5 shrink-0 mr-1.5 opacity-75 rotate-45" />
+				<span className="text-xs font-semibold mr-1.5 shrink-0 opacity-80 uppercase tracking-wide">
+					Prompt:
+				</span>
 				<div
 					className={cn(
 						"flex-1 min-w-0 text-sm text-badge-foreground",
 						"overflow-hidden text-ellipsis whitespace-nowrap",
 						"ph-no-capture",
 					)}>
-					{highlightText(messageText, false)}
+					{highlightText(displayText, false)}
 				</div>
+				{(hasImages || hasFiles) && (
+					<PaperclipIcon className="w-3.5 h-3.5 shrink-0 ml-1.5 opacity-70" />
+				)}
 			</div>
 		)
 	},
@@ -73,7 +86,9 @@ export const StickyUserMessage: React.FC<StickyUserMessageProps> = memo(
 		return (
 			prevProps.lastUserMessage?.ts === nextProps.lastUserMessage?.ts &&
 			prevProps.lastUserMessage?.text === nextProps.lastUserMessage?.text &&
-			prevProps.isVisible === nextProps.isVisible
+			prevProps.isVisible === nextProps.isVisible &&
+			prevProps.lastUserMessage?.images?.length === nextProps.lastUserMessage?.images?.length &&
+			prevProps.lastUserMessage?.files?.length === nextProps.lastUserMessage?.files?.length
 		)
 	},
 )

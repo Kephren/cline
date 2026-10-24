@@ -7,7 +7,22 @@ export function ensureFetch(fetchImpl?: typeof fetch): typeof fetch {
 			"No fetch implementation is available. Pass one in the gateway or provider config.",
 		);
 	}
-	return resolved;
+	return ((
+		input: Parameters<typeof fetch>[0],
+		init?: Parameters<typeof fetch>[1],
+	) => {
+		let requestInit = init;
+		const hasBody = Boolean(
+			requestInit?.body != null ||
+				(typeof Request !== "undefined" &&
+					input instanceof Request &&
+					input.body != null),
+		);
+		if (hasBody && (!requestInit || !("duplex" in requestInit))) {
+			requestInit = { ...requestInit, duplex: "half" } as RequestInit;
+		}
+		return resolved(input, requestInit);
+	}) as typeof fetch;
 }
 
 export async function resolveApiKey(

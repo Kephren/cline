@@ -15,7 +15,7 @@
  */
 
 /** Max characters of command output kept; beyond this the middle is elided. */
-export const MAX_COMMAND_OUTPUT_CHARS = 48_000;
+export const MAX_COMMAND_OUTPUT_CHARS = 192_000;
 
 export function truncateCommandOutput(
 	text: string,
@@ -44,7 +44,7 @@ export const MAX_READ_LINES = 2_000;
 export const MAX_LINE_CHARS = 2_000;
 
 /** Max characters returned per file read window. */
-export const MAX_READ_OUTPUT_CHARS = 48_000;
+export const MAX_READ_OUTPUT_CHARS = 192_000;
 
 /** Max characters returned per search query; beyond this the middle is elided. */
-export const MAX_SEARCH_OUTPUT_CHARS = 48_000;
+export const MAX_SEARCH_OUTPUT_CHARS = 192_000;

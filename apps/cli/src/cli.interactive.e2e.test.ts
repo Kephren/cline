@@ -150,7 +150,7 @@ describe("cli interactive e2e", () => {
 			{ delaySeconds: INITIAL_RENDER_DELAY_SECONDS, input: "" },
 		]);
 		const output = outputOf(result);
-		expect(output).toContain("What can I do for you?");
+		expect(output).toContain("Cline, now with more K!");
 		expect(output).toContain("○ Plan ● Act (Tab)");
 		expect(output).toContain("Auto-approve all enabled (Shift+Tab)");
 	});

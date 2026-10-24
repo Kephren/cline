@@ -4,8 +4,21 @@ import { VSCodeButton } from "@vscode/webview-ui-toolkit/react"
 import type React from "react"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useExtensionState } from "../../../../../context/ExtensionStateContext"
-import { ButtonActionType, getButtonConfigFromState } from "../../shared/buttonConfig"
-import type { ChatState, MessageHandlers } from "../../types/chatTypes"
+import { type ButtonActionType, getButtonConfigFromState } from "../../shared/buttonConfig"
+import type { ButtonActionInvocation, ChatState, DraftSnapshot, MessageHandlers } from "../../types/chatTypes"
+import { isPendingResponseUnconfirmed } from "../../utils/pendingResponse"
+import { ProcessingStatusBar } from "./ProcessingStatusBar"
+
+function createActionInvocation(action: ButtonActionType, getDraftSnapshot: () => DraftSnapshot): ButtonActionInvocation {
+	switch (action) {
+		case "approve":
+		case "reject":
+		case "proceed":
+			return { type: action, draft: getDraftSnapshot() }
+		default:
+			return { type: action }
+	}
+}
 
 interface ActionButtonsProps {
 	task?: ClineMessage
@@ -16,10 +29,10 @@ interface ActionButtonsProps {
 }
 
 /**
- * Action buttons area including approve/reject buttons
+ * Action buttons area including approve/reject buttons and processing status
  */
 export const ActionButtons: React.FC<ActionButtonsProps> = ({ task, messages, chatState, mode, messageHandlers }) => {
-	const { inputValue, selectedImages, selectedFiles, setSendingDisabled } = chatState
+	const { getDraftSnapshot, setSendingDisabled, inputValue, selectedFiles, selectedImages } = chatState
 	const { turnState, foregroundCommandRunning } = useExtensionState()
 
 	// Tracks the ask the user last acted on. Clicking a footer button latches this so the
@@ -30,11 +43,8 @@ export const ActionButtons: React.FC<ActionButtonsProps> = ({ task, messages, ch
 	// Forces a re-render when the latch flips; the counter value itself is unused.
 	const [, bumpRender] = useState(0)
 
-	// Memoize last messages to avoid unnecessary recalculations
-	const [lastMessage, secondLastMessage] = useMemo(() => {
-		const len = messages.length
-		return len > 0 ? [messages[len - 1], messages[len - 2]] : [undefined, undefined]
-	}, [messages])
+	// Memoize the last message to avoid unnecessary recalculation
+	const lastMessage = useMemo(() => messages.at(-1), [messages])
 
 	// Button configuration is driven by the authoritative backend TurnState when present (SDK
 	// path); otherwise it falls back to the legacy tail-walking heuristic. This makes the footer
@@ -50,7 +60,7 @@ export const ActionButtons: React.FC<ActionButtonsProps> = ({ task, messages, ch
 	// message) changes on every new ask, making it the reliable signal that a fresh decision is
 	// due even when the config object is identical. Folding the config's button text in also
 	// covers a same-anchor transition between different button sets.
-	const askIdentity = `${turnState?.anchorTs ?? lastMessage?.ts ?? ""}:${buttonConfig.primaryText ?? ""}:${buttonConfig.secondaryText ?? ""}`
+	const askIdentity = `${turnState?.seq ?? ""}:${turnState?.anchorTs ?? lastMessage?.ts ?? ""}:${buttonConfig.primaryText ?? ""}:${buttonConfig.secondaryText ?? ""}`
 
 	// The buttons are "processing" only while the user's click is being handled for the current
 	// ask. Because the latch is keyed on the ask identity, a new ask (even one reusing the same
@@ -64,18 +74,8 @@ export const ActionButtons: React.FC<ActionButtonsProps> = ({ task, messages, ch
 		setSendingDisabled(buttonConfig.sendingDisabled)
 	}, [buttonConfig, setSendingDisabled])
 
-	// Clear input when transitioning from command_output to api_req
-	// This happens when user provides feedback during command execution
-	useEffect(() => {
-		if (lastMessage?.type === "say" && lastMessage.say === "api_req_started" && secondLastMessage?.ask === "command_output") {
-			chatState.setInputValue("")
-			chatState.setSelectedImages([])
-			chatState.setSelectedFiles([])
-		}
-	}, [lastMessage?.type, lastMessage?.say, secondLastMessage?.ask, chatState])
-
 	const handleActionClick = useCallback(
-		(action: ButtonActionType, text?: string, images?: string[], files?: string[]) => {
+		(invocation: ButtonActionInvocation) => {
 			if (processedAskRef.current === askIdentity) {
 				return
 			}
@@ -83,14 +83,20 @@ export const ActionButtons: React.FC<ActionButtonsProps> = ({ task, messages, ch
 			processedAskRef.current = askIdentity
 			bumpRender((n) => n + 1)
 
-			void messageHandlers.executeButtonAction(action, text, images, files).catch(() => {
-				// Re-enable on error so the user is not stuck; a later ask would clear the latch
-				// on its own, but failures keep the same ask.
+			const releaseLatch = () => {
 				if (processedAskRef.current === askIdentity) {
 					processedAskRef.current = undefined
 					bumpRender((n) => n + 1)
 				}
-			})
+			}
+			void messageHandlers
+				.executeButtonAction(invocation)
+				.then((started) => {
+					if (!started) {
+						releaseLatch()
+					}
+				})
+				.catch(releaseLatch)
 		},
 		[messageHandlers, askIdentity],
 	)
@@ -101,7 +107,7 @@ export const ActionButtons: React.FC<ActionButtonsProps> = ({ task, messages, ch
 			if (event.key === "Escape") {
 				event.preventDefault()
 				event.stopPropagation()
-				handleActionClick("cancel")
+				handleActionClick({ type: "cancel" })
 			}
 		},
 		[handleActionClick],
@@ -119,13 +125,40 @@ export const ActionButtons: React.FC<ActionButtonsProps> = ({ task, messages, ch
 	const { primaryText, secondaryText, primaryAction, secondaryAction, enableButtons } = buttonConfig
 	const hasButtons = primaryText || secondaryText
 	const isStreaming = task.partial === true
-	const canInteract = enableButtons && !isProcessing
+	const canInteract = enableButtons && !isProcessing && !messageHandlers.recoveryActionInFlight
+
+	const isPending = isPendingResponseUnconfirmed(chatState.pendingResponse, turnState, messages.length)
+	const isStreamingState =
+		turnState?.phase === "streaming" ||
+		isStreaming ||
+		isPending ||
+		(secondaryAction === "cancel" && buttonConfig.sendingDisabled)
+
+	if (isStreamingState) {
+		return (
+			<ProcessingStatusBar
+				canInteract={canInteract}
+				foregroundCommandRunning={foregroundCommandRunning}
+				inputValue={inputValue}
+				lastMessage={lastMessage}
+				messages={messages}
+				onAction={(action) => handleActionClick(createActionInvocation(action, getDraftSnapshot))}
+				primaryAction={primaryAction}
+				primaryText={primaryText}
+				secondaryAction={secondaryAction}
+				secondaryText={secondaryText}
+				selectedFiles={selectedFiles}
+				selectedImages={selectedImages}
+				turnState={turnState}
+			/>
+		)
+	}
 
 	if (!hasButtons) {
 		return null
 	}
 
-	const opacity = canInteract || isStreaming ? 1 : 0.5
+	const opacity = canInteract ? 1 : 0.5
 
 	return (
 		<div className="flex px-3.5" style={{ opacity }}>
@@ -134,7 +167,7 @@ export const ActionButtons: React.FC<ActionButtonsProps> = ({ task, messages, ch
 					appearance="primary"
 					className={secondaryText ? "flex-1 mr-[6px]" : "flex-2"}
 					disabled={!canInteract}
-					onClick={() => handleActionClick(primaryAction, inputValue, selectedImages, selectedFiles)}>
+					onClick={() => handleActionClick(createActionInvocation(primaryAction, getDraftSnapshot))}>
 					{primaryText}
 				</VSCodeButton>
 			)}
@@ -143,7 +176,7 @@ export const ActionButtons: React.FC<ActionButtonsProps> = ({ task, messages, ch
 					appearance="secondary"
 					className={primaryText ? "flex-1" : "flex-2"}
 					disabled={!canInteract}
-					onClick={() => handleActionClick(secondaryAction, inputValue, selectedImages, selectedFiles)}>
+					onClick={() => handleActionClick(createActionInvocation(secondaryAction, getDraftSnapshot))}>
 					{secondaryText}
 				</VSCodeButton>
 			)}

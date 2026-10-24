@@ -2,9 +2,93 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, expect, it } from "vitest";
+import {
+	prepareToolResultRecovery,
+	TOOL_RESULT_CACHE_MISS,
+	ToolResultCache,
+} from "../../../session/services/tool-result-cache";
 import { createFileReadExecutor } from "./file-read";
 
 describe("createFileReadExecutor", () => {
+	it("recovers multiline MCP payloads serialized as YAML, including late line ranges", async () => {
+		const payload = Array.from(
+			{ length: 200 },
+			(_, index) => `line ${index + 1}: ${"x".repeat(80)}`,
+		).join("\n");
+		const { text } = prepareToolResultRecovery({
+			content: [{ type: "text", text: payload }],
+			isError: false,
+		});
+		const cache = new ToolResultCache("session");
+		const uri = cache.store("mcp-call", text ?? "") ?? "";
+		const context = {
+			agentId: "agent",
+			iteration: 1,
+			metadata: { toolResultCache: cache },
+		};
+		const reader = createFileReadExecutor();
+		const output = String(await reader({ path: uri }, context));
+		expect(output).toContain("line 200:");
+		expect(output).not.toContain("[line truncated]");
+		const lastLine =
+			(text ?? "").split("\n").findIndex((line) => line.includes("line 200:")) +
+			1;
+		const lateRead = String(
+			await reader(
+				{ path: uri, start_line: lastLine, end_line: lastLine },
+				context,
+			),
+		);
+		expect(lateRead).toContain("line 200:");
+		expect(lateRead).not.toContain("line 1:");
+	});
+	it("reads cache URIs with the same inclusive ranges and line numbers", async () => {
+		const cache = new ToolResultCache("session");
+		const uri = cache.store("call", "alpha\nbeta\ngamma\ndelta") ?? "";
+		const context = {
+			agentId: "agent",
+			iteration: 1,
+			metadata: { toolResultCache: cache },
+		};
+		expect(
+			await createFileReadExecutor()(
+				{ path: uri, start_line: 2, end_line: 3 },
+				context,
+			),
+		).toBe("2 | beta\n3 | gamma");
+		cache.clear();
+		await expect(
+			createFileReadExecutor()({ path: uri }, context),
+		).rejects.toThrow(TOOL_RESULT_CACHE_MISS);
+	});
+
+	it("bounds cached line output and rejects cross-session or unavailable cache reads", async () => {
+		const cache = new ToolResultCache("session");
+		const uri = cache.store("call", `${"x".repeat(10000)}\nend`) ?? "";
+		const context = {
+			agentId: "agent",
+			iteration: 1,
+			metadata: { toolResultCache: cache },
+		};
+		const text = await createFileReadExecutor()({ path: uri }, context);
+		expect(String(text)).toContain("[line truncated]");
+		expect(String(text).length).toBeLessThan(2100);
+		await expect(
+			createFileReadExecutor()(
+				{ path: uri },
+				{
+					...context,
+					metadata: { toolResultCache: new ToolResultCache("other") },
+				},
+			),
+		).rejects.toThrow("for this session");
+		await expect(
+			createFileReadExecutor()(
+				{ path: uri },
+				{ agentId: "agent", iteration: 1 },
+			),
+		).rejects.toThrow(TOOL_RESULT_CACHE_MISS);
+	});
 	it("reads a file from an absolute path", async () => {
 		const result = await readTempFile("hello absolute path");
 		expect(result).toBe("1 | hello absolute path");
@@ -180,16 +264,16 @@ describe("createFileReadExecutor", () => {
 	});
 
 	it("caps the returned window by characters for dense files", async () => {
-		// 1500 lines of 100 chars each is ~150k chars, well over the ~50k cap
+		// 1500 lines of 150 chars each is ~225k chars, well over the ~192k cap
 		// while staying under the 2000-line cap.
 		const result = await readTempFile(
-			Array.from({ length: 1500 }, () => "z".repeat(100)).join("\n"),
+			Array.from({ length: 1500 }, () => "z".repeat(150)).join("\n"),
 		);
 
 		// Bounded by the read window cap; the pagination notice sits at the
 		// end of the kept window, inside the tail that any downstream
 		// provider-request middle-cut preserves.
-		expect(result.length).toBeLessThanOrEqual(50_000);
+		expect(result.length).toBeLessThanOrEqual(200_000);
 		expect(result).toContain("of 1500. Use start_line/end_line");
 	});
 
@@ -198,7 +282,7 @@ describe("createFileReadExecutor", () => {
 			Array.from({ length: 10_000 }, () => "z".repeat(100)).join("\n"),
 		);
 
-		expect(result.length).toBeLessThanOrEqual(50_000);
+		expect(result.length).toBeLessThanOrEqual(200_000);
 		expect(result).toContain("of 10000. Use start_line/end_line");
 	});
 

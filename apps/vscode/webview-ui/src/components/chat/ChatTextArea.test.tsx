@@ -1,16 +1,31 @@
-import { fireEvent, render, screen } from "@testing-library/react"
+import { act, fireEvent, render, screen } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import ChatTextArea from "./ChatTextArea"
+import ChatTextArea, { findLargestFittingContextSize } from "./ChatTextArea"
 
 const mocks = vi.hoisted(() => ({
 	supportsImages: true as boolean | undefined,
+	selectedProvider: "anthropic",
+	selectedModelId: "text-only-model",
+	selectedModelInfo: undefined as Record<string, unknown> | undefined,
+	ollamaModelDetails: undefined as Record<string, unknown> | undefined,
+	commitModelSelection: vi.fn(async () => ({})),
+	writeProviderConfig: vi.fn(async () => ({})),
+	probeOllamaContext: vi.fn(async () => ({ success: true, fitsOnGpu: true, gpuPercent: 100 })),
+	updateApiConfigurationProto: vi.fn(async () => ({})),
+	getOllamaModels: vi.fn(async () => ({ values: [] })),
+	apiConfiguration: {} as Record<string, unknown>,
+	providerConfig: undefined as Record<string, unknown> | undefined,
+	reloadOllamaModel: vi.fn(async () => ({})),
 	navigateToSettingsModelPicker: vi.fn(),
+	clineMessages: [] as any[],
+	cloudState: {} as Record<string, unknown>,
+	didHydrateState: true,
 }))
 
 vi.mock("@/context/ExtensionStateContext", () => ({
 	useExtensionState: () => ({
 		mode: "act",
-		apiConfiguration: {},
+		apiConfiguration: mocks.apiConfiguration,
 		openRouterModels: {},
 		platform: "darwin",
 		localWorkflowToggles: {},
@@ -19,6 +34,9 @@ vi.mock("@/context/ExtensionStateContext", () => ({
 		remoteConfigSettings: undefined,
 		navigateToSettingsModelPicker: mocks.navigateToSettingsModelPicker,
 		mcpServers: [],
+		clineMessages: mocks.clineMessages,
+		didHydrateState: mocks.didHydrateState,
+		...mocks.cloudState,
 	}),
 }))
 
@@ -28,9 +46,9 @@ vi.mock("@/context/PlatformContext", () => ({
 
 vi.mock("@/hooks/useNormalizedApiConfiguration", () => ({
 	useNormalizedApiConfiguration: () => ({
-		selectedProvider: "anthropic",
-		selectedModelId: "text-only-model",
-		selectedModelInfo: { supportsImages: mocks.supportsImages },
+		selectedProvider: mocks.selectedProvider,
+		selectedModelId: mocks.selectedModelId,
+		selectedModelInfo: mocks.selectedModelInfo ?? { supportsImages: mocks.supportsImages },
 	}),
 }))
 
@@ -44,6 +62,17 @@ vi.mock("@/services/grpc-client", () => ({
 	},
 	StateServiceClient: {
 		togglePlanActModeProto: vi.fn(async () => ({})),
+	},
+	ModelsServiceClient: {
+		getOllamaModelStatus: vi.fn(async () => ({})),
+		getOllamaModels: (...args: unknown[]) => mocks.getOllamaModels(...args),
+		getOllamaModelDetails: vi.fn(async () => mocks.ollamaModelDetails ?? {}),
+		commitModelSelection: (...args: unknown[]) => mocks.commitModelSelection(...args),
+		writeProviderConfig: (...args: unknown[]) => mocks.writeProviderConfig(...args),
+		readProviderConfig: vi.fn(async () => mocks.providerConfig ?? {}),
+		probeOllamaContext: (...args: unknown[]) => mocks.probeOllamaContext(...args),
+		reloadOllamaModel: (...args: unknown[]) => mocks.reloadOllamaModel(...args),
+		updateApiConfigurationProto: (...args: unknown[]) => mocks.updateApiConfigurationProto(...args),
 	},
 }))
 
@@ -83,10 +112,39 @@ function pasteImage(target: HTMLElement) {
 	})
 }
 
+describe("ChatTextArea model label", () => {
+	beforeEach(() => {
+		mocks.cloudState = {}
+	})
+
+	it("shows the local provider and model for a local task", () => {
+		renderTextArea()
+		expect(screen.getByTitle("Open API Settings")).toHaveTextContent("anthropic:text-only-model")
+	})
+
+	it.each([
+		["a new task targets Cloud", { cloudSessionsEnabled: true, cloudTaskTarget: { target: "cloud" } }],
+		["a cloud task is shown", { currentCloudTask: { sessionId: "ses-1", status: "running" } }],
+	])("shows the cloud model and hides the Plan/Act toggle when %s", (_case, cloudState) => {
+		mocks.cloudState = { ...cloudState, cloudModelId: "anthropic/claude-sonnet-4.5" }
+		renderTextArea()
+		expect(screen.getByTitle("Open API Settings")).toHaveTextContent("cline:anthropic/claude-sonnet-4.5")
+		expect(screen.queryByTestId("mode-switch")).not.toBeInTheDocument()
+	})
+})
+
 describe("ChatTextArea image attachments vs. model capability", () => {
 	beforeEach(() => {
 		mocks.supportsImages = true
+		mocks.cloudState = {}
 		mocks.navigateToSettingsModelPicker.mockReset()
+	})
+
+	it("renders before optional cloud state has hydrated", () => {
+		renderTextArea()
+
+		expect(screen.getByPlaceholderText("Type a message")).toBeInTheDocument()
+		expect(screen.getByTestId("mode-switch")).toBeInTheDocument()
 	})
 
 	it("still takes the image attach path on paste for a text-only model, without a refusal message", () => {
@@ -141,5 +199,1321 @@ describe("ChatTextArea image attachments vs. model capability", () => {
 		renderTextArea()
 
 		expect(screen.queryByTestId("images-unsupported-notice")).not.toBeInTheDocument()
+	})
+})
+
+describe("ChatTextArea temperature adjustment", () => {
+	beforeEach(() => {
+		mocks.supportsImages = true
+		mocks.selectedProvider = "ollama"
+		mocks.selectedModelId = "llama3:latest"
+		mocks.selectedModelInfo = { temperature: 0.8 }
+		mocks.commitModelSelection.mockReset()
+		mocks.navigateToSettingsModelPicker.mockReset()
+	})
+
+	it("renders temperature input and stepper buttons with max limit 2.0", () => {
+		renderTextArea()
+
+		const input = screen.getByTestId("temperature-input") as HTMLInputElement
+		expect(input).toBeInTheDocument()
+		expect(input.value).toBe("0.8")
+		expect(input.getAttribute("min")).toBe("0")
+		expect(input.getAttribute("max")).toBe("2")
+		expect(input.getAttribute("title")).toBe("Temperature: 0.0 to 2.0 (default 0.8)")
+
+		const container = input.closest('[title="Temperature: 0.0 - 2.0 (0.1 step, default 0.8)"]')
+		expect(container).toBeInTheDocument()
+	})
+
+	it("allows stepping up to 2.0 and disables increment button at 2.0", async () => {
+		mocks.selectedModelInfo = { temperature: 1.9 }
+		renderTextArea()
+
+		const incrementBtn = screen.getByTestId("temperature-increment")
+		expect(incrementBtn).not.toBeDisabled()
+
+		await act(async () => {
+			fireEvent.click(incrementBtn)
+		})
+		expect(mocks.commitModelSelection).toHaveBeenCalledWith(
+			expect.objectContaining({
+				overrides: expect.objectContaining({
+					temperature: 2.0,
+				}),
+			}),
+		)
+
+		const input = screen.getByTestId("temperature-input") as HTMLInputElement
+		expect(input.value).toBe("2.0")
+		expect(incrementBtn).toBeDisabled()
+	})
+
+	it("clamps direct input to 2.0 when exceeding upper limit", async () => {
+		renderTextArea()
+
+		const input = screen.getByTestId("temperature-input")
+		await act(async () => {
+			fireEvent.change(input, { target: { value: "2.5" } })
+		})
+
+		expect(mocks.commitModelSelection).toHaveBeenCalledWith(
+			expect.objectContaining({
+				overrides: expect.objectContaining({
+					temperature: 2.0,
+				}),
+			}),
+		)
+	})
+
+	it("disables decrement button at 0.0", () => {
+		mocks.selectedModelInfo = { temperature: 0.0 }
+		renderTextArea()
+
+		const decrementBtn = screen.getByTestId("temperature-decrement")
+		expect(decrementBtn).toBeDisabled()
+	})
+})
+
+describe("ChatTextArea context size adjustment", () => {
+	beforeEach(() => {
+		mocks.supportsImages = true
+		mocks.selectedProvider = "anthropic"
+		mocks.selectedModelId = "claude-3-7-sonnet"
+		mocks.selectedModelInfo = { contextWindow: 32768 }
+		mocks.commitModelSelection.mockReset()
+		mocks.navigateToSettingsModelPicker.mockReset()
+	})
+
+	it("renders context size slider with 60 increments and context size label", () => {
+		renderTextArea()
+
+		const slider = screen.getByTestId("context-size-slider")
+		expect(slider).toBeInTheDocument()
+		expect(slider.className).toContain("flex-1")
+
+		const thumb = screen.getByRole("slider")
+		expect(thumb).toBeInTheDocument()
+		expect(thumb).toHaveAttribute("aria-valuemin", "0")
+		expect(thumb).toHaveAttribute("aria-valuemax", "60")
+		expect(thumb).toHaveAttribute("aria-valuenow", "22") // 32K is index 22 out of 60
+
+		const label = screen.getByTestId("context-size-value")
+		expect(label).toBeInTheDocument()
+		expect(label).toHaveTextContent("32K")
+		expect(label.className).not.toContain("min-w-[42px]")
+		expect(label.className).not.toContain("text-right")
+		expect(label.className).toContain("whitespace-nowrap")
+	})
+
+	it("steps to the next context size increment on slider ArrowRight", async () => {
+		renderTextArea()
+
+		const thumb = screen.getByRole("slider")
+		await act(async () => {
+			fireEvent.keyDown(thumb, { key: "ArrowRight" })
+		})
+
+		expect(mocks.commitModelSelection).toHaveBeenCalledWith(
+			expect.objectContaining({
+				overrides: expect.objectContaining({
+					contextWindow: 36864,
+				}),
+			}),
+		)
+	})
+
+	it("steps to the previous context size increment on slider ArrowLeft", async () => {
+		renderTextArea()
+
+		const thumb = screen.getByRole("slider")
+		await act(async () => {
+			fireEvent.keyDown(thumb, { key: "ArrowLeft" })
+		})
+
+		expect(mocks.commitModelSelection).toHaveBeenCalledWith(
+			expect.objectContaining({
+				overrides: expect.objectContaining({
+					contextWindow: 28672,
+				}),
+			}),
+		)
+	})
+
+	it("renders at minimum position (index 0) for 512", () => {
+		mocks.selectedModelInfo = { contextWindow: 512 }
+		renderTextArea()
+
+		const thumb = screen.getByRole("slider")
+		expect(thumb).toHaveAttribute("aria-valuenow", "0")
+
+		const label = screen.getByTestId("context-size-value")
+		expect(label).toHaveTextContent("512")
+	})
+
+	it("renders at maximum position (index 60) for 1048576 / 1024K", () => {
+		mocks.selectedModelInfo = { contextWindow: 1048576 }
+		renderTextArea()
+
+		const thumb = screen.getByRole("slider")
+		expect(thumb).toHaveAttribute("aria-valuenow", "60")
+
+		const label = screen.getByTestId("context-size-value")
+		expect(label).toHaveTextContent("1024K")
+	})
+
+	it("renders intermediate context sizes correctly (e.g. 1536 / 1.5K)", () => {
+		mocks.selectedModelInfo = { contextWindow: 1536 }
+		renderTextArea()
+
+		const thumb = screen.getByRole("slider")
+		expect(thumb).toHaveAttribute("aria-valuenow", "4")
+
+		const label = screen.getByTestId("context-size-value")
+		expect(label).toHaveTextContent("1.5K")
+	})
+
+	it("renders context info button without ideal indicator or ideal context labeling", async () => {
+		mocks.selectedModelInfo = { contextWindow: 32768 }
+		renderTextArea()
+
+		expect(screen.queryByTestId("slider-ideal-indicator")).not.toBeInTheDocument()
+
+		const infoBtn = screen.getByTestId("context-info-button")
+		expect(infoBtn).toBeInTheDocument()
+		expect(screen.queryByTestId("tooltip-ideal-context")).not.toBeInTheDocument()
+	})
+
+	it("updates context size and slider when model changes", async () => {
+		mocks.selectedProvider = "ollama"
+		mocks.selectedModelId = "llama3:8b"
+		mocks.selectedModelInfo = { contextWindow: 8192 }
+		mocks.ollamaModelDetails = {
+			contextLength: 8192,
+			parameterSize: "8.0B",
+			quantizationLevel: "Q4_0",
+		}
+
+		const { rerender } = render(
+			<ChatTextArea
+				activeQuote={null}
+				inputValue=""
+				onSelectFilesAndImages={vi.fn()}
+				onSend={vi.fn()}
+				placeholderText="Type a message"
+				selectedFiles={[]}
+				selectedImages={[]}
+				sendingDisabled={false}
+				setInputValue={vi.fn()}
+				setSelectedFiles={vi.fn()}
+				setSelectedImages={vi.fn()}
+				shouldDisableFilesAndImages={false}
+			/>,
+		)
+
+		// Wait for details effect to set context size to 8K
+		const thumb = await screen.findByRole("slider")
+		// 8192 is index 14 in CONTEXT_SIZES
+		expect(thumb).toHaveAttribute("aria-valuenow", "14")
+		expect(screen.getByTestId("context-size-value")).toHaveTextContent("8K")
+
+		// Now change model to a larger model with 128K context
+		mocks.selectedModelId = "llama3.1:8b"
+		mocks.ollamaModelDetails = {
+			contextLength: 131072,
+			parameterSize: "8.0B",
+			quantizationLevel: "Q4_0",
+		}
+
+		await act(async () => {
+			rerender(
+				<ChatTextArea
+					activeQuote={null}
+					inputValue=""
+					onSelectFilesAndImages={vi.fn()}
+					onSend={vi.fn()}
+					placeholderText="Type a message"
+					selectedFiles={[]}
+					selectedImages={[]}
+					sendingDisabled={false}
+					setInputValue={vi.fn()}
+					setSelectedFiles={vi.fn()}
+					setSelectedImages={vi.fn()}
+					shouldDisableFilesAndImages={false}
+				/>,
+			)
+		})
+
+		// 131072 is index 46 in CONTEXT_SIZES
+		expect(thumb).toHaveAttribute("aria-valuenow", "46")
+		expect(screen.getByTestId("context-size-value")).toHaveTextContent("128K")
+	})
+})
+
+describe("ChatTextArea Ollama reasoning mode toggle", () => {
+	beforeEach(() => {
+		mocks.supportsImages = true
+		mocks.selectedProvider = "ollama"
+		mocks.selectedModelId = "llama3.2"
+		mocks.selectedModelInfo = undefined
+		mocks.commitModelSelection.mockReset()
+		mocks.writeProviderConfig.mockReset()
+	})
+
+	it("renders reasoning toggle for non-reasoning Ollama models with thinking off by default", () => {
+		renderTextArea()
+		expect(screen.getByTestId("ollama-reasoning-toggle")).toBeInTheDocument()
+		expect(screen.getByTestId("ollama-reasoning-toggle")).toHaveTextContent("Think: OFF")
+	})
+
+	it("shows reasoning toggle for reasoning Ollama models by model name pattern", () => {
+		mocks.selectedModelId = "deepseek-r1:14b"
+		renderTextArea()
+		expect(screen.getByTestId("ollama-reasoning-toggle")).toBeInTheDocument()
+		expect(screen.getByTestId("ollama-reasoning-toggle")).toHaveTextContent("Think: ON")
+	})
+
+	it("shows reasoning toggle when modelInfo explicitly supports reasoning", () => {
+		mocks.selectedModelId = "custom-local-model"
+		mocks.selectedModelInfo = { supportsReasoning: true }
+		renderTextArea()
+		expect(screen.getByTestId("ollama-reasoning-toggle")).toBeInTheDocument()
+	})
+
+	it("hides reasoning toggle for non-Ollama providers even with reasoning model ID", () => {
+		mocks.selectedProvider = "anthropic"
+		mocks.selectedModelId = "deepseek-r1:14b"
+		renderTextArea()
+		expect(screen.queryByTestId("ollama-reasoning-toggle")).not.toBeInTheDocument()
+	})
+
+	it("toggles reasoning state and writes provider config when clicked", async () => {
+		mocks.selectedModelId = "deepseek-r1:14b"
+		renderTextArea()
+
+		const toggleBtn = screen.getByTestId("ollama-reasoning-toggle")
+		expect(toggleBtn).toHaveTextContent("Think: ON")
+
+		await act(async () => {
+			fireEvent.click(toggleBtn)
+		})
+
+		expect(toggleBtn).toHaveTextContent("Think: OFF")
+		expect(mocks.writeProviderConfig).toHaveBeenCalledWith(
+			expect.objectContaining({
+				providerId: "ollama",
+				patch: expect.objectContaining({
+					reasoning: expect.objectContaining({
+						enabled: false,
+					}),
+				}),
+			}),
+		)
+	})
+})
+
+describe("ChatTextArea telemetry breakdown", () => {
+	beforeEach(() => {
+		mocks.supportsImages = true
+		mocks.selectedProvider = "ollama"
+		mocks.selectedModelId = "deepseek-r1:14b"
+		mocks.clineMessages = []
+	})
+
+	it("displays decoded inference speed from latest message", () => {
+		mocks.clineMessages = [
+			{
+				ts: 1000,
+				type: "say",
+				say: "api_req_finished",
+				text: JSON.stringify({
+					tokensPerSecond: 28.4,
+					tokensIn: 512,
+					tokensOut: 128,
+					durationMs: 4500,
+					promptEvalTokensPerSecond: 180.2,
+				}),
+			},
+		]
+
+		renderTextArea()
+
+		const badge = screen.getByTestId("inference-speed")
+		const modeSwitch = screen.getByTestId("mode-switch")
+		expect(badge).toBeInTheDocument()
+		expect(badge).toHaveTextContent("28.4 t/s")
+		expect(modeSwitch.closest(".shrink-0")).toContainElement(badge)
+	})
+
+	it("does not hide tokens per second badge for ollama provider even without messages", () => {
+		mocks.clineMessages = []
+		renderTextArea()
+
+		const badge = screen.getByTestId("inference-speed")
+		expect(badge).toBeInTheDocument()
+		expect(badge).toHaveTextContent("-- t/s")
+	})
+
+	it("does not hide tokens per second badge for llama provider even without messages", () => {
+		mocks.selectedProvider = "llama"
+		mocks.clineMessages = []
+		renderTextArea()
+
+		const badge = screen.getByTestId("inference-speed")
+		expect(badge).toBeInTheDocument()
+		expect(badge).toHaveTextContent("-- t/s")
+	})
+
+	it("hides tokens per second badge for non-llama providers when there is no telemetry", () => {
+		mocks.selectedProvider = "anthropic"
+		mocks.clineMessages = []
+		renderTextArea()
+
+		expect(screen.queryByTestId("inference-speed")).not.toBeInTheDocument()
+	})
+})
+
+describe("ChatTextArea Ollama Phase 2 architecture & capabilities inspector", () => {
+	beforeEach(() => {
+		mocks.supportsImages = true
+		mocks.selectedProvider = "ollama"
+		mocks.selectedModelId = "qwen2.5-coder:14b"
+		mocks.providerConfig = { baseUrl: "http://127.0.0.1:11434" }
+		mocks.ollamaModelDetails = {
+			format: "gguf",
+			family: "qwen2",
+			parameterSize: "14.7B",
+			quantizationLevel: "Q4_K_M",
+			contextLength: 32768,
+			supportsTools: true,
+			supportsVision: true,
+		}
+	})
+
+	it("renders context info button with architecture specs and verified capability badges", async () => {
+		renderTextArea()
+
+		const infoBtn = await screen.findByTestId("context-info-button")
+		expect(infoBtn).toBeInTheDocument()
+		expect(infoBtn).toHaveAttribute("title", expect.stringContaining("14.7B"))
+		expect(infoBtn).toHaveAttribute("title", expect.stringContaining("Q4_K_M"))
+
+		const toolsBadge = screen.getByTestId("model-tools-badge")
+		expect(toolsBadge).toBeInTheDocument()
+		expect(toolsBadge).toHaveTextContent("Tools")
+
+		const visionBadge = screen.getByTestId("model-vision-badge")
+		expect(visionBadge).toBeInTheDocument()
+		expect(visionBadge).toHaveTextContent("Vision")
+	})
+})
+
+describe("ChatTextArea Ollama Phase 2 native context guard", () => {
+	beforeEach(() => {
+		mocks.supportsImages = true
+		mocks.selectedProvider = "ollama"
+		mocks.selectedModelId = "llama3:8b"
+		mocks.providerConfig = { baseUrl: "http://127.0.0.1:11434" }
+	})
+
+	it("indicates warning on info button when configured context exceeds native context window", async () => {
+		// Context defaults to 32K (32768) if unspecified
+		mocks.ollamaModelDetails = {
+			contextLength: 8192,
+			parameterSize: "8.0B",
+			quantizationLevel: "Q4_0",
+		}
+
+		renderTextArea()
+
+		const infoBtn = await screen.findByTestId("context-info-button")
+		expect(infoBtn).toBeInTheDocument()
+		expect(infoBtn).toHaveAttribute("title", expect.stringContaining("Exceeds model native context limit"))
+		expect(infoBtn).toHaveAttribute("aria-label", expect.stringContaining("exceeds native limit"))
+	})
+
+	it("indicates normal status on info button when within native context window", async () => {
+		mocks.ollamaModelDetails = {
+			contextLength: 65536,
+			parameterSize: "8.0B",
+			quantizationLevel: "Q4_0",
+		}
+
+		renderTextArea()
+
+		const infoBtn = await screen.findByTestId("context-info-button")
+		expect(infoBtn).toBeInTheDocument()
+		expect(infoBtn).toHaveAttribute("title", expect.stringContaining("64K"))
+		expect(infoBtn).not.toHaveAttribute("title", expect.stringContaining("Exceeds model native context limit"))
+	})
+})
+
+describe("ChatTextArea Ollama Phase 2 sampling controls & verbose layout", () => {
+	beforeEach(() => {
+		mocks.supportsImages = true
+		mocks.selectedProvider = "ollama"
+		mocks.selectedModelId = "llama3:latest"
+		mocks.ollamaModelDetails = undefined
+		if (typeof localStorage !== "undefined" && typeof localStorage.clear === "function") {
+			localStorage.clear()
+		}
+	})
+
+	it("renders verbose labels for Context, Temperature, and GPU status", () => {
+		renderTextArea()
+
+		expect(screen.getByText("Context:")).toBeInTheDocument()
+		expect(screen.getByText("Temp")).toBeInTheDocument()
+		expect(screen.getByTestId("gpu-cpu-ratio")).toHaveTextContent("GPU: 100% (Idle)")
+	})
+
+	it("toggles deterministic seed on and off", async () => {
+		renderTextArea()
+
+		const seedBtn = screen.getByTestId("ollama-seed-toggle")
+		expect(seedBtn).toHaveTextContent("Seed: Off")
+
+		await act(async () => {
+			fireEvent.click(seedBtn)
+		})
+		expect(seedBtn).toHaveTextContent("Seed: 42")
+
+		await act(async () => {
+			fireEvent.click(seedBtn)
+		})
+		expect(seedBtn).toHaveTextContent("Seed: Off")
+	})
+
+	it("adjusts Min-P sampling via stepper buttons", async () => {
+		renderTextArea()
+
+		const minPInput = screen.getByTestId("min-p-input") as HTMLInputElement
+		expect(minPInput.value).toBe("0.00")
+
+		const incrementBtn = screen.getByTestId("min-p-increment")
+		await act(async () => {
+			fireEvent.click(incrementBtn)
+		})
+		expect(minPInput.value).toBe("0.05")
+
+		const decrementBtn = screen.getByTestId("min-p-decrement")
+		await act(async () => {
+			fireEvent.click(decrementBtn)
+		})
+		expect(minPInput.value).toBe("0.00")
+	})
+})
+
+describe("ChatTextArea Ollama GPU autotune", () => {
+	beforeEach(() => {
+		mocks.supportsImages = true
+		mocks.selectedProvider = "ollama"
+		mocks.selectedModelId = "llama3:8b"
+		mocks.selectedModelInfo = { contextWindow: 16384 }
+		mocks.providerConfig = { baseUrl: "http://127.0.0.1:11434" }
+		mocks.apiConfiguration = { ollamaBaseUrl: "http://127.0.0.1:11434" }
+		mocks.commitModelSelection.mockReset()
+		mocks.probeOllamaContext = vi.fn(async (req: any) => {
+			// Simulating GPU capacity fitting up to 16,384 tokens
+			const fits = req.contextWindow <= 16384
+			return {
+				success: true,
+				fitsOnGpu: fits,
+				gpuPercent: fits ? 100 : 75,
+				sizeVram: fits ? 5000000000 : 3750000000,
+				size: 5000000000,
+			}
+		})
+	})
+
+	it("renders Tune button for Ollama provider", () => {
+		renderTextArea()
+		const autotuneBtn = screen.getByTestId("ollama-autotune-button")
+		expect(autotuneBtn).toBeInTheDocument()
+		expect(autotuneBtn).toHaveTextContent("Tune")
+	})
+
+	it("hides Tune button for non-Ollama providers", () => {
+		mocks.selectedProvider = "anthropic"
+		renderTextArea()
+		expect(screen.queryByTestId("ollama-autotune-button")).not.toBeInTheDocument()
+	})
+
+	it("runs autotune calibration when clicked, shows live status, and sets optimal context size", async () => {
+		renderTextArea()
+		const autotuneBtn = screen.getByTestId("ollama-autotune-button")
+
+		await act(async () => {
+			fireEvent.click(autotuneBtn)
+		})
+
+		// Starts probing from Native Limit (16384) target
+		expect(mocks.probeOllamaContext).toHaveBeenCalledWith(
+			expect.objectContaining({
+				modelName: "llama3:8b",
+				contextWindow: 16384,
+			}),
+		)
+
+		// Should have committed the optimal context window (16384)
+		expect(mocks.commitModelSelection).toHaveBeenCalledWith(
+			expect.objectContaining({
+				overrides: expect.objectContaining({
+					contextWindow: 16384,
+				}),
+			}),
+		)
+		expect(screen.getByTestId("context-size-value")).toHaveTextContent("16K")
+		// Button shows tuned status on completion and stays green
+		expect(autotuneBtn).toHaveTextContent("Tuned")
+		expect(autotuneBtn).toHaveClass("text-emerald-500")
+
+		// GPU/CPU ratio badge updates to show 100% GPU utilized (not Idle)
+		const gpuRatio = screen.getByTestId("gpu-cpu-ratio")
+		expect(gpuRatio).toHaveTextContent("GPU: 100%")
+		expect(gpuRatio).not.toHaveTextContent("Idle")
+	})
+
+	it("adjusts context window downwards in 4K steps when initial size exceeds GPU capacity", async () => {
+		mocks.selectedModelInfo = { contextWindow: 32768 }
+		mocks.probeOllamaContext = vi.fn(async (req: any) => {
+			const fits = req.contextWindow <= 16384
+			return {
+				success: true,
+				fitsOnGpu: fits,
+				gpuPercent: fits ? 100 : 60,
+				sizeVram: fits ? 4000000000 : 2400000000,
+				size: 4000000000,
+			}
+		})
+
+		renderTextArea()
+		const autotuneBtn = screen.getByTestId("ollama-autotune-button")
+
+		await act(async () => {
+			fireEvent.click(autotuneBtn)
+		})
+
+		// Should have probed 32768 first (Native Limit target)
+		expect(mocks.probeOllamaContext).toHaveBeenCalledWith(
+			expect.objectContaining({
+				modelName: "llama3:8b",
+				contextWindow: 32768,
+			}),
+		)
+		// Minimum boundary (4096) probed
+		expect(mocks.probeOllamaContext).toHaveBeenCalledWith(
+			expect.objectContaining({
+				modelName: "llama3:8b",
+				contextWindow: 4096,
+			}),
+		)
+		// Midpoint (16384) probed
+		expect(mocks.probeOllamaContext).toHaveBeenCalledWith(
+			expect.objectContaining({
+				modelName: "llama3:8b",
+				contextWindow: 16384,
+			}),
+		)
+		// All probed sizes must be multiples of 4096 (4K)
+		for (const call of (mocks.probeOllamaContext as any).mock.calls) {
+			expect(call[0].contextWindow % 4096).toBe(0)
+		}
+		expect(autotuneBtn).toHaveTextContent("Tuned")
+		expect(autotuneBtn).toHaveClass("text-emerald-500")
+	})
+
+	it("displays error status in button and detailed tooltip when autotuning fails", async () => {
+		mocks.probeOllamaContext = vi.fn(async () => ({
+			success: false,
+			fitsOnGpu: false,
+			gpuPercent: 0,
+			error: "connect ECONNREFUSED 127.0.0.1:11434",
+		}))
+
+		renderTextArea()
+		const autotuneBtn = screen.getByTestId("ollama-autotune-button")
+
+		await act(async () => {
+			fireEvent.click(autotuneBtn)
+		})
+
+		expect(autotuneBtn).toHaveTextContent("Failed")
+		expect(autotuneBtn).toHaveClass("text-red-500")
+		expect(autotuneBtn).toHaveAttribute("aria-label", expect.stringContaining("Cannot connect to Ollama at http://127.0.0.1:11434"))
+		expect(autotuneBtn).toHaveAttribute("aria-label", expect.stringContaining("reachable at the configured address"))
+	})
+
+	it("displays error when Ollama server address is not configured without assuming local server", async () => {
+		mocks.providerConfig = undefined
+		mocks.apiConfiguration = {}
+
+		renderTextArea()
+		const autotuneBtn = screen.getByTestId("ollama-autotune-button")
+
+		await act(async () => {
+			fireEvent.click(autotuneBtn)
+		})
+
+		expect(mocks.probeOllamaContext).not.toHaveBeenCalled()
+		expect(autotuneBtn).toHaveTextContent("Failed")
+		expect(autotuneBtn).toHaveAttribute("aria-label", expect.stringContaining("Ollama server address is not configured"))
+	})
+
+	it("allows cancelling autotuning mid-calibration", async () => {
+		mocks.probeOllamaContext = vi.fn(() => new Promise(() => {})) // Never resolves
+
+		renderTextArea()
+		const autotuneBtn = screen.getByTestId("ollama-autotune-button")
+
+		// Start autotuning
+		await act(async () => {
+			fireEvent.click(autotuneBtn)
+		})
+
+		// Button shows live testing state while running
+		expect(autotuneBtn).toHaveTextContent(/Testing|Starting/)
+
+		// Clicking while running triggers cancellation
+		await act(async () => {
+			fireEvent.click(autotuneBtn)
+		})
+
+		// Returns to idle Tune label
+		expect(autotuneBtn).toHaveTextContent("Tune")
+	})
+})
+
+describe("ChatTextArea Ollama settings persistence", () => {
+	beforeEach(() => {
+		mocks.selectedProvider = "ollama"
+		mocks.selectedModelId = "deepseek-r1:8b"
+		mocks.selectedModelInfo = {
+			contextWindow: 32768,
+			supportsReasoning: true,
+		}
+		mocks.providerConfig = { baseUrl: "http://127.0.0.1:11434" }
+		mocks.apiConfiguration = { ollamaBaseUrl: "http://127.0.0.1:11434" }
+		mocks.updateApiConfigurationProto.mockClear()
+		if (typeof localStorage !== "undefined" && typeof localStorage.clear === "function") {
+			localStorage.clear()
+		}
+	})
+
+	it("restores persisted temperature from apiConfiguration", () => {
+		mocks.apiConfiguration = {
+			ollamaTemperature: 1.4,
+		}
+
+		renderTextArea()
+		const input = screen.getByTestId("temperature-input") as HTMLInputElement
+		expect(input.value).toBe("1.4")
+	})
+
+	it("prioritizes persisted apiConfiguration.ollamaTemperature over modelInfo.temperature", () => {
+		mocks.selectedModelInfo = {
+			contextWindow: 32768,
+			temperature: 0.2,
+		}
+		mocks.apiConfiguration = {
+			ollamaTemperature: 1.4,
+		}
+
+		renderTextArea()
+		const input = screen.getByTestId("temperature-input") as HTMLInputElement
+		expect(input.value).toBe("1.4")
+	})
+
+	it("defaults temperature to 0.8 when not previously set", () => {
+		mocks.selectedModelInfo = {
+			contextWindow: 32768,
+		}
+		mocks.apiConfiguration = {}
+
+		renderTextArea()
+		const input = screen.getByTestId("temperature-input") as HTMLInputElement
+		expect(input.value).toBe("0.8")
+	})
+
+	it("persists temperature changes to apiConfiguration", async () => {
+		renderTextArea()
+		const incrementBtn = screen.getByTestId("temperature-increment")
+
+		await act(async () => {
+			fireEvent.click(incrementBtn)
+		})
+
+		expect(mocks.updateApiConfigurationProto).toHaveBeenCalledWith(
+			expect.objectContaining({
+				apiConfiguration: expect.objectContaining({
+					ollamaTemperature: 0.9,
+				}),
+			}),
+		)
+	})
+
+	it("restores persisted Min-P from apiConfiguration", () => {
+		mocks.apiConfiguration = {
+			ollamaMinP: 0.25,
+		}
+
+		renderTextArea()
+		const input = screen.getByTestId("min-p-input") as HTMLInputElement
+		expect(input.value).toBe("0.25")
+	})
+
+	it("persists Min-P changes to apiConfiguration", async () => {
+		renderTextArea()
+		const incrementBtn = screen.getByTestId("min-p-increment")
+
+		await act(async () => {
+			fireEvent.click(incrementBtn)
+		})
+
+		expect(mocks.updateApiConfigurationProto).toHaveBeenCalledWith(
+			expect.objectContaining({
+				apiConfiguration: expect.objectContaining({
+					ollamaMinP: 0.05,
+				}),
+			}),
+		)
+	})
+
+	it("restores persisted Top-P from apiConfiguration", () => {
+		mocks.apiConfiguration = {
+			ollamaTopP: 0.95,
+		}
+
+		renderTextArea()
+		const input = screen.getByTestId("top-p-input") as HTMLInputElement
+		expect(input.value).toBe("0.95")
+	})
+
+	it("persists Top-P changes to apiConfiguration", async () => {
+		renderTextArea()
+		const incrementBtn = screen.getByTestId("top-p-increment")
+
+		await act(async () => {
+			fireEvent.click(incrementBtn)
+		})
+
+		expect(mocks.updateApiConfigurationProto).toHaveBeenCalledWith(
+			expect.objectContaining({
+				apiConfiguration: expect.objectContaining({
+					ollamaTopP: 0.95,
+				}),
+			}),
+		)
+	})
+
+	it("restores persisted Top-K from apiConfiguration", () => {
+		mocks.apiConfiguration = {
+			ollamaTopK: 50,
+		}
+
+		renderTextArea()
+		const input = screen.getByTestId("top-k-input") as HTMLInputElement
+		expect(input.value).toBe("50")
+	})
+
+	it("persists Top-K changes to apiConfiguration", async () => {
+		renderTextArea()
+		const incrementBtn = screen.getByTestId("top-k-increment")
+
+		await act(async () => {
+			fireEvent.click(incrementBtn)
+		})
+
+		expect(mocks.updateApiConfigurationProto).toHaveBeenCalledWith(
+			expect.objectContaining({
+				apiConfiguration: expect.objectContaining({
+					ollamaTopK: 45,
+				}),
+			}),
+		)
+	})
+
+	it("restores persisted repeat penalty from apiConfiguration", () => {
+		mocks.apiConfiguration = {
+			ollamaRepeatPenalty: 1.25,
+		}
+
+		renderTextArea()
+		const input = screen.getByTestId("repeat-penalty-input") as HTMLInputElement
+		expect(input.value).toBe("1.25")
+	})
+
+	it("persists repeat penalty changes to apiConfiguration", async () => {
+		renderTextArea()
+		const incrementBtn = screen.getByTestId("repeat-penalty-increment")
+
+		await act(async () => {
+			fireEvent.click(incrementBtn)
+		})
+
+		expect(mocks.updateApiConfigurationProto).toHaveBeenCalledWith(
+			expect.objectContaining({
+				apiConfiguration: expect.objectContaining({
+					ollamaRepeatPenalty: 1.15,
+				}),
+			}),
+		)
+	})
+
+	it("restores persisted deterministic seed from apiConfiguration", () => {
+		mocks.apiConfiguration = {
+			ollamaSeedEnabled: true,
+			ollamaSeedValue: 999,
+		}
+
+		renderTextArea()
+		const seedToggle = screen.getByTestId("ollama-seed-toggle")
+		expect(seedToggle).toHaveTextContent("Seed: 999")
+	})
+
+	it("persists deterministic seed toggle to apiConfiguration", async () => {
+		renderTextArea()
+		const seedToggle = screen.getByTestId("ollama-seed-toggle")
+
+		await act(async () => {
+			fireEvent.click(seedToggle)
+		})
+
+		expect(mocks.updateApiConfigurationProto).toHaveBeenCalledWith(
+			expect.objectContaining({
+				apiConfiguration: expect.objectContaining({
+					ollamaSeedEnabled: true,
+				}),
+			}),
+		)
+	})
+
+	it("restores persisted reasoning mode from apiConfiguration", () => {
+		mocks.apiConfiguration = {
+			ollamaReasoning: false,
+		}
+
+		renderTextArea()
+		const reasoningToggle = screen.getByTestId("ollama-reasoning-toggle")
+		expect(reasoningToggle).toHaveTextContent("Think: OFF")
+	})
+
+	it("persists reasoning mode toggle to apiConfiguration", async () => {
+		mocks.apiConfiguration = {
+			ollamaReasoning: true,
+		}
+
+		renderTextArea()
+		const reasoningToggle = screen.getByTestId("ollama-reasoning-toggle")
+
+		await act(async () => {
+			fireEvent.click(reasoningToggle)
+		})
+
+		expect(mocks.updateApiConfigurationProto).toHaveBeenCalledWith(
+			expect.objectContaining({
+				apiConfiguration: expect.objectContaining({
+					ollamaReasoning: false,
+				}),
+			}),
+		)
+	})
+
+	it("restores persisted tuned status from apiConfiguration on reload", () => {
+		mocks.apiConfiguration = {
+			ollamaIsTuned: true,
+			ollamaTunedContextSize: 16384,
+			ollamaTunedModel: "deepseek-r1:8b",
+		}
+
+		renderTextArea()
+		const autotuneBtn = screen.getByTestId("ollama-autotune-button")
+		expect(autotuneBtn).toHaveTextContent("Tuned")
+		expect(autotuneBtn).toHaveClass("text-emerald-500")
+
+		const gpuBadge = screen.getByTestId("gpu-cpu-ratio")
+		expect(gpuBadge).toHaveTextContent("GPU: 100%")
+
+		// Slider value is updated to autotuned context size
+		const label = screen.getByTestId("context-size-value")
+		expect(label).toHaveTextContent("16K")
+
+		// Green marker is rendered on slider track
+		const tunedIndicator = screen.getByTestId("slider-tuned-indicator")
+		expect(tunedIndicator).toBeInTheDocument()
+		expect(tunedIndicator).toHaveClass("bg-emerald-500")
+		// 16384 is index 18 of 60
+		expect(tunedIndicator).toHaveStyle({ left: `${(18 / 60) * 100}%` })
+	})
+
+	it("snaps context slider to nearest config value on initial load", () => {
+		// Model info specifies arbitrary unaligned 8000 tokens
+		mocks.selectedModelInfo = { contextWindow: 8000 }
+		renderTextArea()
+
+		// Nearest step in CONTEXT_SIZES to 8000 is 8192 (8K, index 14)
+		const thumb = screen.getByRole("slider")
+		expect(thumb).toHaveAttribute("aria-valuenow", "14")
+
+		const label = screen.getByTestId("context-size-value")
+		expect(label).toHaveTextContent("8K")
+	})
+
+	it("snaps context slider to nearest autotuned config value on load", () => {
+		// apiConfiguration specifies arbitrary unaligned 16000 tokens
+		mocks.apiConfiguration = {
+			ollamaIsTuned: true,
+			ollamaTunedContextSize: 16000,
+			ollamaTunedModel: "deepseek-r1:8b",
+		}
+		renderTextArea()
+
+		// Nearest step to 16000 is 16384 (16K, index 18)
+		const thumb = screen.getByRole("slider")
+		expect(thumb).toHaveAttribute("aria-valuenow", "18")
+
+		const label = screen.getByTestId("context-size-value")
+		expect(label).toHaveTextContent("16K")
+
+		const tunedIndicator = screen.getByTestId("slider-tuned-indicator")
+		expect(tunedIndicator).toBeInTheDocument()
+		expect(tunedIndicator).toHaveStyle({ left: `${(18 / 60) * 100}%` })
+	})
+
+	it("preserves green tuned marker when user adjusts slider and allows 1-click snap back", async () => {
+		mocks.apiConfiguration = {
+			ollamaIsTuned: true,
+			ollamaTunedContextSize: 16384,
+			ollamaTunedModel: "deepseek-r1:8b",
+		}
+
+		renderTextArea()
+		const tunedIndicator = screen.getByTestId("slider-tuned-indicator")
+		expect(tunedIndicator).toBeInTheDocument()
+
+		// Adjust slider away (e.g. step down)
+		const thumb = screen.getByRole("slider")
+		await act(async () => {
+			fireEvent.keyDown(thumb, { key: "ArrowLeft" })
+		})
+
+		// Slider has moved to 14K (index 17)
+		expect(thumb).toHaveAttribute("aria-valuenow", "17")
+		expect(screen.getByTestId("context-size-value")).toHaveTextContent("14K")
+
+		// Green marker is STILL rendered at 16K to discourage adjusting and guide user back
+		expect(screen.getByTestId("slider-tuned-indicator")).toBeInTheDocument()
+		expect(screen.getByTestId("slider-tuned-indicator")).toHaveStyle({ left: `${(18 / 60) * 100}%` })
+
+		// Button shows idle Tune since context was moved away
+		const autotuneBtn = screen.getByTestId("ollama-autotune-button")
+		expect(autotuneBtn).toHaveTextContent("Tune")
+
+		// Click the green marker to snap slider back to autotuned context size
+		await act(async () => {
+			fireEvent.click(screen.getByTestId("slider-tuned-indicator"))
+		})
+
+		// Slider snaps back to 16K
+		expect(screen.getByRole("slider")).toHaveAttribute("aria-valuenow", "18")
+		expect(screen.getByTestId("context-size-value")).toHaveTextContent("16K")
+
+		// Restores Tuned status
+		expect(autotuneBtn).toHaveTextContent("Tuned")
+		expect(autotuneBtn).toHaveClass("text-emerald-500")
+	})
+
+	it("updates slider value to autotuned context and adds green marker on autotune completion", async () => {
+		mocks.selectedModelInfo = { contextWindow: 8192 }
+		mocks.probeOllamaContext = vi.fn(async () => ({
+			success: true,
+			fitsOnGpu: true,
+			gpuPercent: 100,
+			sizeVram: 4000000000,
+			size: 4000000000,
+		}))
+
+		renderTextArea()
+		expect(screen.queryByTestId("slider-tuned-indicator")).not.toBeInTheDocument()
+
+		const autotuneBtn = screen.getByTestId("ollama-autotune-button")
+		await act(async () => {
+			fireEvent.click(autotuneBtn)
+		})
+
+		// Slider value is updated to autotuned context size (8K native limit fits on GPU)
+		expect(screen.getByTestId("context-size-value")).toHaveTextContent("8K")
+		expect(autotuneBtn).toHaveTextContent("Tuned")
+
+		// Green marker is now rendered on slider track
+		const tunedIndicator = screen.getByTestId("slider-tuned-indicator")
+		expect(tunedIndicator).toBeInTheDocument()
+		expect(tunedIndicator).toHaveClass("bg-emerald-500")
+	})
+
+	it("targets model native context length from ollamaModelDetails during autotune", async () => {
+		mocks.selectedModelInfo = undefined
+		mocks.ollamaModelDetails = {
+			contextLength: 65536,
+			parameterSize: "8.0B",
+			quantizationLevel: "Q4_0",
+		}
+		mocks.probeOllamaContext = vi.fn(async () => ({
+			success: true,
+			fitsOnGpu: true,
+			gpuPercent: 100,
+			sizeVram: 4000000000,
+			size: 4000000000,
+		}))
+
+		renderTextArea()
+		const autotuneBtn = screen.getByTestId("ollama-autotune-button")
+		await act(async () => {
+			fireEvent.click(autotuneBtn)
+		})
+
+		expect(mocks.probeOllamaContext).toHaveBeenCalledWith(
+			expect.objectContaining({
+				contextWindow: 65536,
+			}),
+		)
+		expect(screen.getByTestId("context-size-value")).toHaveTextContent("64K")
+		expect(autotuneBtn).toHaveTextContent("Tuned")
+	})
+
+	it("does not overwrite tuned context size with model context length when getOllamaModelDetails resolves on load", async () => {
+		mocks.apiConfiguration = {
+			ollamaIsTuned: true,
+			ollamaTunedContextSize: 16384,
+			ollamaTunedModel: "deepseek-r1:8b",
+			ollamaApiOptionsCtxNum: "16384",
+		}
+		mocks.selectedProvider = "ollama"
+		mocks.selectedModelId = "deepseek-r1:8b"
+		mocks.selectedModelInfo = { contextWindow: 32768 }
+		mocks.ollamaModelDetails = {
+			contextLength: 32768,
+			parameterSize: "8.0B",
+			quantizationLevel: "Q4_0",
+		}
+
+		renderTextArea()
+
+		// Slider must remain set to 16K (index 18) and NOT reset to 32K (index 22)
+		const thumb = await screen.findByRole("slider")
+		expect(thumb).toHaveAttribute("aria-valuenow", "18")
+		expect(screen.getByTestId("context-size-value")).toHaveTextContent("16K")
+
+		// Green tuned indicator is at 16K (index 18)
+		const tunedIndicator = screen.getByTestId("slider-tuned-indicator")
+		expect(tunedIndicator).toBeInTheDocument()
+		expect(tunedIndicator).toHaveStyle({ left: `${(18 / 60) * 100}%` })
+
+		// Ideal indicator is removed
+		expect(screen.queryByTestId("slider-ideal-indicator")).not.toBeInTheDocument()
+	})
+
+	it("sets context slider to Model Context Window config value on load instead of model default", async () => {
+		mocks.apiConfiguration = {
+			ollamaApiOptionsCtxNum: "16384",
+		}
+		mocks.selectedProvider = "ollama"
+		mocks.selectedModelId = "deepseek-r1:8b"
+		mocks.selectedModelInfo = { contextWindow: 32768 }
+		mocks.ollamaModelDetails = {
+			contextLength: 32768,
+		}
+
+		renderTextArea()
+
+		// Slider must initialize to Model Context Window 16K (index 18) instead of 32K
+		const thumb = await screen.findByRole("slider")
+		expect(thumb).toHaveAttribute("aria-valuenow", "18")
+		expect(screen.getByTestId("context-size-value")).toHaveTextContent("16K")
+	})
+
+	it("prioritizes Model Context Window config over stale tuned size when ollamaIsTuned is false", async () => {
+		mocks.apiConfiguration = {
+			ollamaIsTuned: false,
+			ollamaTunedContextSize: 16384,
+			ollamaTunedModel: "deepseek-r1:8b",
+			ollamaApiOptionsCtxNum: "8192",
+		}
+		mocks.selectedProvider = "ollama"
+		mocks.selectedModelId = "deepseek-r1:8b"
+		mocks.selectedModelInfo = { contextWindow: 32768 }
+
+		renderTextArea()
+
+		// Slider must initialize to the manually configured 8K (index 14) rather than stale 16K
+		const thumb = await screen.findByRole("slider")
+		expect(thumb).toHaveAttribute("aria-valuenow", "14")
+		expect(screen.getByTestId("context-size-value")).toHaveTextContent("8K")
+	})
+
+	it("refreshes Ollama models with updated base URL when refresh button is clicked", async () => {
+		mocks.selectedProvider = "ollama"
+		mocks.selectedModelId = "llama3:latest"
+		mocks.apiConfiguration = { ollamaBaseUrl: "http://192.168.80.170:22434" }
+		mocks.getOllamaModels.mockResolvedValueOnce({
+			values: ["mannix/Bonsai-2-27B:latest", "llama3:latest"],
+		})
+
+		renderTextArea()
+
+		const refreshButton = await screen.findByTestId("refresh-ollama-models")
+		await act(async () => {
+			fireEvent.click(refreshButton)
+		})
+
+		expect(mocks.getOllamaModels).toHaveBeenCalledWith(
+			expect.objectContaining({
+				value: "http://192.168.80.170:22434",
+			}),
+		)
+	})
+
+	describe("findLargestFittingContextSize", () => {
+		it("floors to largest predefined context size that fits and never exceeds tested limit", () => {
+			expect(findLargestFittingContextSize(4096)).toBe(4096)
+			expect(findLargestFittingContextSize(5000)).toBe(4096)
+			expect(findLargestFittingContextSize(8192)).toBe(8192)
+			expect(findLargestFittingContextSize(23000)).toBe(20480)
+			expect(findLargestFittingContextSize(24576)).toBe(24576)
+			expect(findLargestFittingContextSize(30000)).toBe(28672)
+			expect(findLargestFittingContextSize(32768)).toBe(32768)
+			expect(findLargestFittingContextSize(90112)).toBe(90112)
+			expect(findLargestFittingContextSize(110592)).toBe(110592)
+		})
+	})
+
+	describe("Ollama Row 3 runtime model options", () => {
+		beforeEach(() => {
+			mocks.selectedProvider = "ollama"
+			mocks.selectedModelId = "qwen2.5-coder:7b"
+			mocks.apiConfiguration = {
+				ollamaBaseUrl: "http://localhost:11434",
+				ollamaNumPredict: 128,
+				ollamaNumGpu: 99,
+			}
+		})
+
+		it("renders Preload button and triggers reloadOllamaModel with keep_alive", async () => {
+			renderTextArea()
+
+			const preloadButton = await screen.findByTestId("ollama-preload-button")
+			const gpuRatio = screen.getByTestId("gpu-cpu-ratio")
+			const unloadButton = screen.getByTestId("unload-ollama-model-button")
+			expect(preloadButton).toBeInTheDocument()
+			expect(gpuRatio).toBeInTheDocument()
+			expect(unloadButton).toBeInTheDocument()
+			expect(preloadButton.parentElement).toContainElement(gpuRatio)
+			expect(preloadButton.parentElement).toContainElement(unloadButton)
+
+			await act(async () => {
+				fireEvent.click(preloadButton)
+			})
+
+			expect(mocks.reloadOllamaModel).toHaveBeenCalledWith(
+				expect.objectContaining({
+					baseUrl: "http://localhost:11434",
+					modelName: "qwen2.5-coder:7b",
+					keepAlive: "10m",
+					numGpu: 99,
+					numPredict: 128,
+					topP: 0.9,
+					topK: 40,
+					repeatPenalty: 1.1,
+				}),
+			)
+		})
+
+		it("adjusts max tokens (num_predict) via stepper and direct input", async () => {
+			renderTextArea()
+
+			const input = (await screen.findByTestId("num-predict-input")) as HTMLInputElement
+			expect(input.value).toBe("128")
+
+			const incButton = screen.getByTestId("num-predict-increment")
+			await act(async () => {
+				fireEvent.click(incButton)
+			})
+
+			expect(input.value).toBe("256")
+			expect(localStorage.getItem("cline:ollama:numPredict")).toBe("256")
+		})
+
+		it("toggles Full GPU offload and allows custom layer count adjustments", async () => {
+			renderTextArea()
+
+			const fullGpuToggle = await screen.findByTestId("ollama-full-gpu-toggle")
+			expect(fullGpuToggle).toHaveTextContent("GPU: Full (99)")
+
+			// Click toggle to switch to custom layers mode
+			await act(async () => {
+				fireEvent.click(fullGpuToggle)
+			})
+
+			expect(fullGpuToggle).toHaveTextContent("GPU: 0L")
+			expect(screen.getByTestId("num-gpu-input")).toBeInTheDocument()
+
+			const incGpu = screen.getByTestId("num-gpu-increment")
+			await act(async () => {
+				fireEvent.click(incGpu)
+			})
+
+			expect(screen.getByTestId("num-gpu-input")).toHaveValue(1)
+			expect(localStorage.getItem("cline:ollama:numGpu")).toBe("1")
+		})
+
+		it("resets all model settings to recommended defaults when Defaults button is clicked", async () => {
+			mocks.apiConfiguration = {
+				ollamaTemperature: 1.5,
+				ollamaMinP: 0.25,
+				ollamaTopP: 0.98,
+				ollamaTopK: 80,
+				ollamaRepeatPenalty: 1.4,
+				ollamaNumPredict: 512,
+				ollamaNumGpu: 32,
+				ollamaSeedEnabled: true,
+				ollamaSeedValue: 777,
+				ollamaReasoning: false,
+			}
+
+			renderTextArea()
+
+			const defaultsButton = await screen.findByTestId("ollama-reset-defaults-button")
+			expect(defaultsButton).toBeInTheDocument()
+
+			await act(async () => {
+				fireEvent.click(defaultsButton)
+			})
+
+			expect(mocks.updateApiConfigurationProto).toHaveBeenCalledWith(
+				expect.objectContaining({
+					apiConfiguration: expect.objectContaining({
+						ollamaTemperature: 0.8,
+						ollamaMinP: 0.0,
+						ollamaTopP: 0.9,
+						ollamaTopK: 40,
+						ollamaRepeatPenalty: 1.1,
+						ollamaNumPredict: 128,
+						ollamaNumGpu: 99,
+						ollamaSeedEnabled: false,
+						ollamaSeedValue: 42,
+					}),
+				}),
+			)
+
+			expect(localStorage.getItem("cline:ollama:temperature")).toBe("0.8")
+			expect(localStorage.getItem("cline:ollama:minP")).toBe("0")
+			expect(localStorage.getItem("cline:ollama:topP")).toBe("0.9")
+			expect(localStorage.getItem("cline:ollama:topK")).toBe("40")
+			expect(localStorage.getItem("cline:ollama:repeatPenalty")).toBe("1.1")
+			expect(localStorage.getItem("cline:ollama:numPredict")).toBe("128")
+			expect(localStorage.getItem("cline:ollama:numGpu")).toBe("99")
+			expect(localStorage.getItem("cline:ollama:seedEnabled")).toBe("false")
+			expect(localStorage.getItem("cline:ollama:seedValue")).toBe("42")
+		})
 	})
 })

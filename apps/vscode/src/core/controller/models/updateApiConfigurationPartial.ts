@@ -6,6 +6,7 @@ import type { Controller } from "../index"
 import { clearOrganizationForClinePassProviderSelection } from "./handleClinePassProviderSelection"
 import { normalizeProviderSwitchModel } from "./providerSwitchNormalization"
 import { createTaskApiModelShim, resolveActiveModelIdFromApiConfiguration } from "./taskApiModel"
+import { parseProviderId } from "@/sdk/model-catalog/provider-id"
 
 /**
  * Updates API configuration with partial values using FieldMask
@@ -46,6 +47,18 @@ export async function updateApiConfigurationPartial(
 		// Update storage and task API model shim
 		controller.stateManager.setApiConfiguration(normalizedConfig)
 		clearOrganizationForClinePassProviderSelection(controller, normalizedConfig)
+
+		if (typeof normalizedConfig.ollamaReasoning === "boolean") {
+			try {
+				controller.getProviderConfigStore()?.write(parseProviderId("ollama"), {
+					reasoning: {
+						enabled: normalizedConfig.ollamaReasoning,
+					},
+				})
+			} catch (err) {
+				Logger.warn("[APICONFIG] Failed to sync Ollama reasoning to provider config store:", err)
+			}
+		}
 		if (controller.task) {
 			const currentMode = controller.stateManager.getGlobalSettingsKey("mode")
 			const modelId = resolveActiveModelIdFromApiConfiguration(normalizedConfig, currentMode)

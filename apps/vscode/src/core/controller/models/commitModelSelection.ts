@@ -28,11 +28,32 @@ export async function commitModelSelection(
 		controller.getProviderConfigStore().commitSelection(providerId, mode, selection)
 	}
 
+	const resolved = controller.getProviderConfigStore().readSelection(providerId, mode)
+
 	if (hasProviderCatalogStateController(controller)) {
-		controller.stateManager.setGlobalStateBatch({
+		const updates: Record<string, any> = {
 			[`${mode}ModeApiProvider`]: toLegacyApiProvider(providerId.toString()),
 			[getProviderModelIdKey(toLegacyApiProvider(providerId.toString()), mode)]: selection.modelId,
-		})
+		}
+		if (providerId.toString() === "ollama") {
+			const ctx = selection.overrides?.contextWindow ?? resolved?.modelInfo?.contextWindow
+			if (typeof ctx === "number" && ctx > 0) {
+				updates.ollamaApiOptionsCtxNum = String(ctx)
+			}
+			const temp = selection.overrides?.temperature ?? resolved?.modelInfo?.temperature
+			if (typeof temp === "number" && Number.isFinite(temp)) {
+				updates.ollamaTemperature = temp
+			} else {
+				updates.ollamaTemperature = undefined
+			}
+			const reasoning = selection.overrides?.supportsReasoning ?? resolved?.modelInfo?.supportsReasoning
+			if (typeof reasoning === "boolean") {
+				updates.ollamaReasoning = reasoning
+			} else {
+				updates.ollamaReasoning = undefined
+			}
+		}
+		controller.stateManager.setGlobalStateBatch(updates)
 		await controller.stateManager.flushPendingState?.()
 		const nextApiConfiguration = controller.stateManager.getApiConfiguration?.()
 		if (nextApiConfiguration) {

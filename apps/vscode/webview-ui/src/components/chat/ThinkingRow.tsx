@@ -1,4 +1,4 @@
-import { ChevronDownIcon, ChevronRightIcon } from "lucide-react"
+import { ChevronDownIcon, ChevronRightIcon, LoaderCircleIcon } from "lucide-react"
 import { memo, useCallback, useEffect, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
@@ -69,6 +69,9 @@ export const ThinkingRow = memo(
 						onClick={onToggle}
 						size="icon"
 						variant="icon">
+						{isStreaming && (
+							<LoaderCircleIcon className="size-3.5 animate-spin text-[var(--vscode-progressBar-background)] shrink-0 inline-block mr-1 align-text-bottom" />
+						)}
 						<span
 							className={cn("text-[13px] leading-[1.2]", {
 								"animate-shimmer bg-linear-90 from-foreground to-description bg-[length:200%_100%] bg-clip-text text-transparent":

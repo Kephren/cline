@@ -107,4 +107,157 @@ describe("useScrollBehavior", () => {
 
 		expect(result.current.disableAutoScrollRef.current).toBe(false)
 	})
+
+	it("scrolls instantly with auto behavior when content changes during active streaming", () => {
+		const streamingMessage = {
+			ts: 2,
+			type: "say",
+			say: "text",
+			text: "streaming chunk...",
+			partial: true,
+		}
+		const { result } = renderHook(() => useScrollBehavior([streamingMessage as any], [], [], {}, vi.fn()))
+		const scrollTo = vi.fn()
+		;(result.current.virtuosoRef as MutableRefObject<{ scrollTo: typeof scrollTo } | null>).current = { scrollTo }
+
+		act(() => {
+			result.current.handleLastRowContentChange()
+		})
+
+		expect(scrollTo).toHaveBeenCalledWith({
+			top: Number.MAX_SAFE_INTEGER,
+			behavior: "auto",
+		})
+	})
+
+	it("scrolls to latest information when prompt streaming completes", () => {
+		const streamingMessage = {
+			ts: 2,
+			type: "say",
+			say: "text",
+			text: "streaming chunk...",
+			partial: true,
+		}
+		let currentMessages = [streamingMessage as any]
+		const { result, rerender } = renderHook(
+			({ msgs }) => useScrollBehavior(msgs, [], [], {}, vi.fn()),
+			{ initialProps: { msgs: currentMessages } },
+		)
+		const scrollTo = vi.fn()
+		;(result.current.virtuosoRef as MutableRefObject<{ scrollTo: typeof scrollTo } | null>).current = { scrollTo }
+
+		act(() => {
+			result.current.disableAutoScrollRef.current = true
+		})
+
+		const completedMessage = {
+			...streamingMessage,
+			partial: false,
+		}
+		currentMessages = [completedMessage as any]
+
+		act(() => {
+			rerender({ msgs: currentMessages })
+		})
+
+		expect(result.current.disableAutoScrollRef.current).toBe(false)
+		expect(scrollTo).toHaveBeenCalledWith({
+			top: Number.MAX_SAFE_INTEGER,
+			behavior: "auto",
+		})
+	})
+
+	it("returns null for lastUserMessage when only initial task message exists", () => {
+		const taskMessage = {
+			ts: 1,
+			type: "say",
+			say: "task",
+			text: "Initial task prompt",
+		}
+		const { result } = renderHook(() => useScrollBehavior([taskMessage as any], [], [], {}, vi.fn()))
+		expect(result.current.lastUserMessage).toBeNull()
+	})
+
+	it("picks the most recent user prompt in multi-step workflows", () => {
+		const taskMessage = {
+			ts: 1,
+			type: "say",
+			say: "task",
+			text: "Initial task",
+		}
+		const botMessage1 = {
+			ts: 2,
+			type: "say",
+			say: "text",
+			text: "Done step 1",
+		}
+		const userPrompt1 = {
+			ts: 3,
+			type: "say",
+			say: "user_feedback",
+			text: "Step 2 instruction",
+		}
+		const botMessage2 = {
+			ts: 4,
+			type: "say",
+			say: "text",
+			text: "Done step 2",
+		}
+		const userPrompt2 = {
+			ts: 5,
+			type: "say",
+			say: "user_feedback",
+			text: "Step 3 instruction: please do this next",
+		}
+		const botMessage3 = {
+			ts: 6,
+			type: "say",
+			say: "text",
+			text: "Working on step 3...",
+		}
+
+		const messages = [
+			taskMessage,
+			botMessage1,
+			userPrompt1,
+			botMessage2,
+			userPrompt2,
+			botMessage3,
+		] as any[]
+
+		const { result } = renderHook(() => useScrollBehavior(messages, [], [], {}, vi.fn()))
+		expect(result.current.lastUserMessage).toEqual(userPrompt2)
+		expect(result.current.scrolledPastUserMessage).toEqual(userPrompt2)
+	})
+
+	it("scrolls to message using ClineMessage object", () => {
+		const taskMessage = { ts: 1, type: "say", say: "task", text: "Task" }
+		const userPrompt = { ts: 2, type: "say", say: "user_feedback", text: "Do more" }
+		const botMessage = { ts: 3, type: "say", say: "text", text: "Sure" }
+
+		const messages = [taskMessage, userPrompt, botMessage] as any[]
+		const groupedMessages = [taskMessage, userPrompt, botMessage] as any[]
+
+		const { result } = renderHook(() =>
+			useScrollBehavior(messages, messages, groupedMessages, {}, vi.fn()),
+		)
+
+		const scrollToIndex = vi.fn()
+		;(result.current.virtuosoRef as MutableRefObject<{ scrollToIndex: typeof scrollToIndex } | null>).current = {
+			scrollToIndex,
+		}
+
+		act(() => {
+			result.current.scrollToMessage(userPrompt as any)
+		})
+
+		// Flush requestAnimationFrame
+		vi.runAllTimers()
+
+		expect(scrollToIndex).toHaveBeenCalledWith({
+			index: 1,
+			align: "start",
+			behavior: "smooth",
+		})
+	})
 })

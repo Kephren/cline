@@ -8,6 +8,7 @@
 //
 // The factory does NOT handle UI concerns — that's the SdkController's job.
 
+import { BlockList, isIP } from "node:net"
 import {
 	buildWorkspaceMetadata,
 	type ClineCoreStartInput,
@@ -41,7 +42,7 @@ import { StateManager } from "@/core/storage/StateManager"
 import { HostProvider } from "@/hosts/host-provider"
 import { ExtensionRegistryInfo } from "@/registry"
 import { getDistinctId } from "@/services/logging/distinctId"
-import { fetch } from "@/shared/net"
+import { fetch, fetchWithoutIdleTimeouts } from "@/shared/net"
 import { type BedrockProviderConfig, buildBedrockProviderConfig } from "./bedrock-config"
 import { buildAgentHooks } from "./hooks-adapter"
 import { readTaskHistory, resolveDataDir } from "./legacy-state-reader"
@@ -76,6 +77,11 @@ export interface SessionConfigInput {
 	workspaceRoot?: string
 	/** Current mode (act/plan) */
 	mode?: Mode
+	/** Runtime identity when execution happens outside the extension host. */
+	runtime?: {
+		modelSelection: { providerId: string; modelId: string }
+		platform: string
+	}
 }
 
 /** Active session state tracked by the factory */
@@ -84,6 +90,12 @@ export interface ActiveSession {
 	sessionId: string
 	/** The config used to start the active session. */
 	startConfig?: Pick<CoreSessionConfig, "providerId" | "modelId">
+	/**
+	 * The mode the session's tools were built for. It can differ from the
+	 * persisted mode setting while a start or rebuild is in flight, so mode
+	 * switches compare against this rather than the setting.
+	 */
+	mode?: Mode
 	/** The runtime host instance managing this session (VscodeSessionHost) */
 	sdkHost: SdkSessionHost
 	/** Unsubscribe function for session events */
@@ -92,6 +104,12 @@ export interface ActiveSession {
 	startResult?: StartSessionResult
 	/** Whether the session is currently running */
 	isRunning: boolean
+	/**
+	 * Prompts Core holds in this session's queue. Core drains the queue itself
+	 * as soon as a turn ends, so a session with queued prompts is about to run
+	 * again and is not idle for passive rebuilds.
+	 */
+	queuedPromptCount: number
 }
 
 function createSdkLogger() {
@@ -130,6 +148,34 @@ async function resolveIsMultiRootWorkspace(): Promise<boolean> {
 		return paths.length > 1
 	} catch {
 		return false
+	}
+}
+
+/**
+ * Client identity the SDK reports for this host: the session's
+ * `extensionContext.client`, and the source of the Cline surface headers
+ * (`X-CLIENT-TYPE`, `X-PLATFORM`, …). Standalone requests (commit message
+ * generation) call this too, so a one-shot request and a task from the same
+ * host report the same client by construction — there is no second mapping
+ * to keep in step. Falls back to the extension's own identity when the host
+ * bridge can't answer.
+ */
+export interface HostClientContext {
+	name: string
+	version: string
+	platform?: string
+	platformVersion?: string
+	isMultiRoot: boolean
+}
+
+export async function resolveClineRequestClientContext(): Promise<HostClientContext> {
+	const [hostIdentity, isMultiRoot] = await Promise.all([resolveHostIdentity(), resolveIsMultiRootWorkspace()])
+	return {
+		name: hostIdentity?.clineType || ClineClient.VSCode,
+		version: hostIdentity?.clineVersion || ExtensionRegistryInfo.version,
+		platform: hostIdentity?.platform || undefined,
+		platformVersion: hostIdentity?.version || undefined,
+		isMultiRoot,
 	}
 }
 
@@ -219,6 +265,73 @@ function resolveProviderReasoningConfig(providerId: string): SessionReasoningCon
 	}
 }
 
+export function isOllamaReasoningModel(
+	modelId?: string,
+	modelInfo?: { supportsReasoning?: boolean },
+): boolean {
+	if (modelInfo?.supportsReasoning !== undefined) {
+		return modelInfo.supportsReasoning
+	}
+	if (!modelId) {
+		return false
+	}
+	const lower = modelId.toLowerCase()
+	return (
+		lower.includes("deepseek-r1") ||
+		lower.includes("deepseek-r") ||
+		lower.includes("qwq") ||
+		lower.includes("qwen3") ||
+		lower.includes("thinking") ||
+		lower.includes("reasoning") ||
+		/(^|[-_:])r1([-_:]|$)/i.test(lower)
+	)
+}
+
+export function resolveOllamaReasoningConfig(
+	apiConfig: ApiConfiguration | undefined,
+	modelId: string | undefined,
+	selection?: ResolvedModelSelection,
+): SessionReasoningConfig {
+	try {
+		// 1. Explicit per-model override or modelInfo takes highest precedence
+		if (typeof selection?.overrides?.supportsReasoning === "boolean") {
+			return { thinking: selection.overrides.supportsReasoning }
+		}
+		if (typeof selection?.modelInfo?.supportsReasoning === "boolean") {
+			return { thinking: selection.modelInfo.supportsReasoning }
+		}
+
+		const manager = getProviderSettingsManager(resolveDataDir())
+		const settings = manager.getProviderSettings("ollama")
+
+		// 2. Explicit UI toggle from apiConfig
+		if (typeof apiConfig?.ollamaReasoning === "boolean") {
+			const enabled = apiConfig.ollamaReasoning
+			// Sync with providers.json if out of sync
+			if (settings && settings.reasoning?.enabled !== enabled) {
+				const sanitizedSettings: ProviderSettings = {
+					...settings,
+					reasoning: { ...settings.reasoning, enabled },
+				}
+				manager.saveProviderSettings(sanitizedSettings, { setLastUsed: false })
+			}
+			return { thinking: enabled }
+		}
+
+		// 2. Check settings in providers.json
+		if (typeof settings?.reasoning?.enabled === "boolean") {
+			return { thinking: settings.reasoning.enabled }
+		}
+
+		// 3. Fallback based on model heuristics
+		const isReasoning = isOllamaReasoningModel(modelId, selection?.modelInfo)
+		return { thinking: isReasoning }
+	} catch (error) {
+		Logger.warn("[SessionFactory] Ollama reasoning resolution failed:", error)
+		return { thinking: false }
+	}
+}
+
 function resolveOcaReasoningConfig(mode: Mode, apiConfig: ApiConfiguration | undefined): SessionReasoningConfig | undefined {
 	const rawEffort = mode === "plan" ? apiConfig?.planModeOcaReasoningEffort : apiConfig?.actModeOcaReasoningEffort
 	const effort = rawEffort?.trim().toLowerCase()
@@ -279,10 +392,12 @@ function toSdkModelInfo(selection: ResolvedModelSelection): SdkModelInfo {
 	}
 
 	const maxTokens = positiveFiniteNumber(modelInfo.maxTokens)
-	const contextWindow = positiveFiniteNumber(modelInfo.contextWindow)
+	const contextWindow =
+		positiveFiniteNumber(selection.overrides?.contextWindow) ?? positiveFiniteNumber(modelInfo.contextWindow)
 	const maxInputTokens =
 		positiveFiniteNumber(selection.overrides?.maxInputTokens) ?? positiveFiniteNumber(modelInfo.maxInputTokens)
-	const temperature = nonNegativeFiniteNumber(modelInfo.temperature)
+	const temperature =
+		nonNegativeFiniteNumber(selection.overrides?.temperature) ?? nonNegativeFiniteNumber(modelInfo.temperature)
 	const inputPrice = nonNegativeFiniteNumber(modelInfo.inputPrice)
 	const outputPrice = nonNegativeFiniteNumber(modelInfo.outputPrice)
 	const cacheRead = nonNegativeFiniteNumber(modelInfo.cacheReadsPrice)
@@ -570,7 +685,14 @@ export function normalizeSdkBaseUrl(providerId: string, baseUrl: unknown): strin
 		return undefined
 	}
 
-	const providerDefaultBaseUrl = MODEL_COLLECTIONS_BY_PROVIDER_ID[toSdkProviderId(providerId)]?.provider.baseUrl
+	const sdkProviderId = toSdkProviderId(providerId)
+	// OpenAI Compatible endpoints are user-supplied, so use the URL as entered
+	// rather than inheriting the OpenAI default `/v1` path.
+	if (sdkProviderId === "openai-compatible") {
+		return trimmed
+	}
+
+	const providerDefaultBaseUrl = MODEL_COLLECTIONS_BY_PROVIDER_ID[sdkProviderId]?.provider.baseUrl
 	if (!providerDefaultBaseUrl) {
 		return trimmed
 	}
@@ -663,7 +785,16 @@ export function resolveAzureProviderConfig(config: ApiConfiguration): Pick<Provi
 }
 
 type OllamaProviderConfig = {
-	modelInfo?: { id: string; name: string; contextWindow: number }
+	modelInfo?: {
+		id: string
+		name: string
+		contextWindow: number
+		temperature?: number
+		minP?: number
+		seed?: number
+		numPredict?: number
+		numGpu?: number
+	}
 	timeoutMs?: number
 }
 
@@ -676,7 +807,11 @@ type OllamaProviderConfig = {
  * budgets against the window Ollama actually applies (Ollama truncates the
  * prompt to `num_ctx` server-side).
  */
-export function resolveOllamaProviderConfig(config: ApiConfiguration, modelId: string | undefined): OllamaProviderConfig {
+export function resolveOllamaProviderConfig(
+	config: ApiConfiguration,
+	modelId: string | undefined,
+	selection?: ResolvedModelSelection,
+): OllamaProviderConfig {
 	// providers.json (`contextWindow`) is the source of truth; the legacy
 	// StateManager string is a migration fallback (the config store mirrors
 	// writes to both).
@@ -687,15 +822,108 @@ export function resolveOllamaProviderConfig(config: ApiConfiguration, modelId: s
 	} catch {
 		Logger.warn("[SessionFactory] Failed to read Ollama settings from providers.json")
 	}
+	const overrideContextWindow =
+		positiveFiniteNumber(selection?.overrides?.contextWindow) ??
+		positiveFiniteNumber(selection?.modelInfo?.contextWindow)
 	const raw = config.ollamaApiOptionsCtxNum?.trim()
 	const parsed = raw ? Number(raw) : Number.NaN
 	const legacyContextWindow = Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : undefined
-	const contextWindow = settingsContextWindow ?? legacyContextWindow ?? OLLAMA_DEFAULT_CONTEXT_WINDOW
+	const contextWindow = overrideContextWindow ?? settingsContextWindow ?? legacyContextWindow ?? OLLAMA_DEFAULT_CONTEXT_WINDOW
 	const timeoutMs = config.requestTimeoutMs
+
+	const overrideTemperature =
+		nonNegativeFiniteNumber(selection?.overrides?.temperature) ??
+		nonNegativeFiniteNumber(selection?.modelInfo?.temperature)
+	const temperature =
+		overrideTemperature ??
+		(typeof config.ollamaTemperature === "number" && config.ollamaTemperature >= 0 ? config.ollamaTemperature : undefined)
+	const minP = typeof config.ollamaMinP === "number" && config.ollamaMinP > 0 ? config.ollamaMinP : undefined
+	const topP = typeof config.ollamaTopP === "number" && config.ollamaTopP > 0 ? config.ollamaTopP : undefined
+	const topK = typeof config.ollamaTopK === "number" && config.ollamaTopK >= 0 ? config.ollamaTopK : undefined
+	const repeatPenalty =
+		typeof config.ollamaRepeatPenalty === "number" && config.ollamaRepeatPenalty > 0
+			? config.ollamaRepeatPenalty
+			: undefined
+	const seed = config.ollamaSeedEnabled && typeof config.ollamaSeedValue === "number" ? config.ollamaSeedValue : undefined
+	const numPredict =
+		typeof config.ollamaNumPredict === "number" && Number.isFinite(config.ollamaNumPredict)
+			? config.ollamaNumPredict
+			: undefined
+	const numGpu =
+		typeof config.ollamaNumGpu === "number" && Number.isFinite(config.ollamaNumGpu) && config.ollamaNumGpu >= 0
+			? config.ollamaNumGpu
+			: undefined
+
 	return {
 		...(typeof timeoutMs === "number" && timeoutMs > 0 ? { timeoutMs } : {}),
-		...(modelId ? { modelInfo: { id: modelId, name: modelId, contextWindow } } : {}),
+		...(modelId
+			? {
+					modelInfo: {
+						id: modelId,
+						name: modelId,
+						contextWindow,
+						...(temperature !== undefined ? { temperature } : {}),
+						...(minP !== undefined ? { minP } : {}),
+						...(topP !== undefined ? { topP } : {}),
+						...(topK !== undefined ? { topK } : {}),
+						...(repeatPenalty !== undefined ? { repeatPenalty } : {}),
+						...(seed !== undefined ? { seed } : {}),
+						...(numPredict !== undefined ? { numPredict } : {}),
+						...(numGpu !== undefined ? { numGpu } : {}),
+					},
+				}
+			: {}),
 	}
+}
+
+/**
+ * Providers whose base URL commonly points at a local model server. Those
+ * can spend longer than undici's 300s idle timeouts producing the first
+ * token, so they get `fetchWithoutIdleTimeouts` when the base URL is on the
+ * local network. Remote gateways (and every other provider) keep the
+ * proxy-aware fetch: on VS Code it honours `http.proxy`, which
+ * `fetchWithoutIdleTimeouts` cannot, and it keeps the dead-connection cap.
+ */
+const LOCAL_SERVER_PROVIDERS = new Set(["lmstudio", "ollama", "openai-compatible", "litellm"])
+
+const LOCAL_NETWORK_ADDRESSES = new BlockList()
+for (const [address, prefix] of [
+	["127.0.0.0", 8],
+	["0.0.0.0", 32],
+	["10.0.0.0", 8],
+	["172.16.0.0", 12],
+	["192.168.0.0", 16],
+	["169.254.0.0", 16],
+	["100.64.0.0", 10],
+] as const) {
+	LOCAL_NETWORK_ADDRESSES.addSubnet(address, prefix, "ipv4")
+}
+LOCAL_NETWORK_ADDRESSES.addAddress("::1", "ipv6")
+LOCAL_NETWORK_ADDRESSES.addSubnet("fc00::", 7, "ipv6")
+LOCAL_NETWORK_ADDRESSES.addSubnet("fe80::", 10, "ipv6")
+
+// An unset base URL means the provider's localhost default.
+function isLocalNetworkUrl(baseUrl: string | undefined): boolean {
+	if (!baseUrl) {
+		return true
+	}
+	let host: string
+	try {
+		host = new URL(baseUrl).hostname.replace(/^\[|\]$/g, "").toLowerCase()
+	} catch {
+		return false
+	}
+	// BlockList matches IPv4-mapped IPv6 (`[::ffff:127.0.0.1]`) against the
+	// IPv4 rules, so no unwrapping is needed.
+	const family = isIP(host)
+	if (family) {
+		return LOCAL_NETWORK_ADDRESSES.check(host, family === 6 ? "ipv6" : "ipv4")
+	}
+	return !host.includes(".") || /\.(localhost|local|internal)$/.test(host)
+}
+
+export function resolveProviderFetch(sdkProviderId: string, baseUrl: string | undefined): typeof globalThis.fetch {
+	return LOCAL_SERVER_PROVIDERS.has(sdkProviderId) && isLocalNetworkUrl(baseUrl) ? fetchWithoutIdleTimeouts : fetch
 }
 
 export function resolveBaseUrl(providerId: string, config: ApiConfiguration): string | undefined {
@@ -846,7 +1074,9 @@ export async function buildSessionConfig(input: SessionConfigInput): Promise<Cor
 		// builds or other hosts may carry SDK catalog spellings (e.g.
 		// `openai-compatible`); fold them back to the legacy spelling the
 		// provider-keyed maps below are keyed by.
-		const modeProvider = mode === "plan" ? apiConfig.planModeApiProvider : apiConfig.actModeApiProvider
+		const modeProvider =
+			input.runtime?.modelSelection.providerId ??
+			(mode === "plan" ? apiConfig.planModeApiProvider : apiConfig.actModeApiProvider)
 		providerId = modeProvider ? toLegacyApiProvider(modeProvider) : modeProvider
 
 		if (providerId) {
@@ -854,7 +1084,7 @@ export async function buildSessionConfig(input: SessionConfigInput): Promise<Cor
 			apiKey = resolveApiKey(providerId, apiConfig)
 
 			// Resolve model ID
-			modelId = resolveModelId(providerId, mode, apiConfig)
+			modelId = input.runtime?.modelSelection.modelId ?? resolveModelId(providerId, mode, apiConfig)
 
 			// Resolve base URL
 			baseUrl = resolveBaseUrl(providerId, apiConfig)
@@ -948,15 +1178,22 @@ export async function buildSessionConfig(input: SessionConfigInput): Promise<Cor
 	}
 	apiKey = apiKey ?? ""
 	const committedRuntimeModel = resolveCommittedRuntimeModel(providerId, mode, modelId)
+	if (providerId === "ollama") {
+		ollamaProviderConfig = resolveOllamaProviderConfig(apiConfig ?? {}, modelId, committedRuntimeModel)
+	}
 	const overriddenMaxTokens = committedRuntimeModel?.overrides?.maxTokens
 	const maxTokensPerTurn =
 		positiveFiniteNumber(overriddenMaxTokens) ??
 		(providerId === "openai" ? resolveOpenAiCompatibleMaxTokens(apiConfig, mode) : undefined)
-	const temperature = nonNegativeFiniteNumber(committedRuntimeModel?.overrides?.temperature)
+	const temperature =
+		nonNegativeFiniteNumber(committedRuntimeModel?.overrides?.temperature) ??
+		(providerId === "ollama" ? ollamaProviderConfig?.modelInfo?.temperature : undefined)
 	const reasoningConfig =
 		providerId === "oca"
 			? (resolveOcaReasoningConfig(mode, apiConfig) ?? resolveProviderReasoningConfig(providerId))
-			: resolveProviderReasoningConfig(providerId)
+			: providerId === "ollama"
+				? resolveOllamaReasoningConfig(apiConfig, modelId, committedRuntimeModel)
+				: resolveProviderReasoningConfig(providerId)
 
 	// Include rich workspace metadata so Cline API observability can extract
 	// git remotes and the latest commit hash from the system message.
@@ -979,7 +1216,7 @@ export async function buildSessionConfig(input: SessionConfigInput): Promise<Cor
 			metadata: workspaceMetadata,
 			mode: mode === "plan" ? "plan" : "act",
 			providerId,
-			platform: process.platform,
+			platform: input.runtime?.platform ?? process.platform,
 			// The extension never exposes switch_to_act_mode (unlike the CLI):
 			// matching the legacy extension, the user must flip the Plan/Act
 			// toggle themselves, so the plan contract must not tell the model to
@@ -1016,8 +1253,7 @@ export async function buildSessionConfig(input: SessionConfigInput): Promise<Cor
 	// own provider id spelling (e.g. "openai-compatible" rather than the
 	// extension's "openai"). Convert before handing the id to core.
 	const sdkProviderId = toSdkProviderId(providerId)
-	const hostIdentity = await resolveHostIdentity()
-	const isMultiRoot = await resolveIsMultiRootWorkspace()
+	const client = await resolveClineRequestClientContext()
 	let knownModels: Awaited<ReturnType<typeof getModelsForProvider>> | undefined
 	try {
 		// Constructing the settings manager loads providers.json and models.json into
@@ -1064,7 +1300,7 @@ export async function buildSessionConfig(input: SessionConfigInput): Promise<Cor
 		// straight from providerConfig — notably the compaction summarizer, which
 		// otherwise falls back to a small default output cap (CLINE-2911).
 		...(maxTokensPerTurn !== undefined ? { maxOutputTokens: maxTokensPerTurn } : {}),
-		fetch,
+		fetch: resolveProviderFetch(sdkProviderId, baseUrl),
 	}
 
 	const config: CoreSessionConfig = {
@@ -1103,19 +1339,13 @@ export async function buildSessionConfig(input: SessionConfigInput): Promise<Cor
 		logger: sdkLogger,
 		extensionContext: {
 			user: distinctId ? { distinctId } : undefined,
-			client: {
-				name: hostIdentity?.clineType || ClineClient.VSCode,
-				version: hostIdentity?.clineVersion || ExtensionRegistryInfo.version,
-				platform: hostIdentity?.platform || undefined,
-				platformVersion: hostIdentity?.version || undefined,
-				isMultiRoot,
-			},
+			client,
 			workspace: {
 				rootPath: workspaceRoot,
 				cwd,
 				workspaceName: resolveWorkspaceName(workspaceRoot),
 				ide: "VS Code",
-				platform: process.platform,
+				platform: input.runtime?.platform ?? process.platform,
 				mode: mode === "plan" ? "plan" : "act",
 			},
 			logger: sdkLogger,
