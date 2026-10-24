@@ -2,10 +2,10 @@
   <img src="assets/icons/icon.png" width="80" alt="Cline" />
 </p>
 
-<h1 align="center">Cline</h1>
+<h1 align="center">Cline, now with more K</h1>
 
 <p align="center">
-The open source coding agent in your IDE, terminal, & desktop!
+The open source coding agent in your IDE, terminal, & desktop! Expanded to have a focus on usage with Ollama as a power user. Control of multiple parameter and includes context maximization depending if the model can full fully within GPU VRAM.
 </p>
 
 <div align="center">
