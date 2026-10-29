@@ -69,10 +69,14 @@ export class ClineInlineCompletionProvider implements vscode.InlineCompletionIte
 			const offset = document.offsetAt(position)
 			const text = document.getText()
 
-			const prefixStart = Math.max(0, offset - 2000)
+			const maxChars = Math.max(10000, Math.floor((config.numCtx || 65536) * 3))
+			const prefixLimit = Math.floor(maxChars * 0.8)
+			const suffixLimit = Math.floor(maxChars * 0.2)
+
+			const prefixStart = Math.max(0, offset - prefixLimit)
 			const prefix = text.slice(prefixStart, offset)
 
-			const suffixEnd = Math.min(text.length, offset + 500)
+			const suffixEnd = Math.min(text.length, offset + suffixLimit)
 			const suffix = text.slice(offset, suffixEnd)
 
 			const fimPrompt = `<|fim_prefix|>${prefix}<|fim_suffix|>${suffix}<|fim_middle|>`
@@ -91,7 +95,7 @@ export class ClineInlineCompletionProvider implements vscode.InlineCompletionIte
 				think: false,
 				stream: false,
 				options: {
-					num_ctx: Math.min(config.numCtx, 8192),
+					num_ctx: config.numCtx || 65536,
 					num_predict: 64,
 					temperature: 0.2,
 					stop: [

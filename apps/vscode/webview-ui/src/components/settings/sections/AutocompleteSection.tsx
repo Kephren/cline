@@ -14,7 +14,7 @@ interface AutocompleteSectionProps {
 	renderSectionHeader: (tabId: string) => JSX.Element | null
 }
 
-const COMMON_CONTEXT_PRESETS = [2048, 4096, 8192, 16384, 32768]
+const COMMON_CONTEXT_PRESETS = [2048, 4096, 8192, 16384, 32768, 65536]
 
 export const AutocompleteSection = ({ renderSectionHeader }: AutocompleteSectionProps) => {
 	const {
@@ -108,8 +108,8 @@ export const AutocompleteSection = ({ renderSectionHeader }: AutocompleteSection
 			(apiConfiguration?.ollamaApiOptionsCtxNum
 				? Number.parseInt(apiConfiguration.ollamaApiOptionsCtxNum, 10)
 				: undefined) ||
-			4096
-		: autocompleteNumCtx || 4096
+			65536
+		: autocompleteNumCtx || 65536
 
 	const requestOllamaStatus = useCallback(
 		async (overrideUrl?: string) => {
@@ -154,7 +154,7 @@ export const AutocompleteSection = ({ renderSectionHeader }: AutocompleteSection
 				ReloadOllamaModelRequest.create({
 					baseUrl: effectiveBaseUrl,
 					modelName: targetModel,
-					contextWindow: Number.isFinite(effectiveNumCtx) && effectiveNumCtx > 0 ? Math.min(effectiveNumCtx, 8192) : 4096,
+					contextWindow: Number.isFinite(effectiveNumCtx) && effectiveNumCtx > 0 ? effectiveNumCtx : 65536,
 					keepAlive: "30m",
 				}),
 			)
@@ -225,7 +225,7 @@ export const AutocompleteSection = ({ renderSectionHeader }: AutocompleteSection
 		updateSetting("autocompleteShareWithChat", false)
 		updateSetting("autocompleteBaseUrl", chatBaseUrl)
 		updateSetting("autocompleteModelId", chatModelId)
-		updateSetting("autocompleteNumCtx", Number.isFinite(chatCtx) ? chatCtx : 4096)
+		updateSetting("autocompleteNumCtx", Number.isFinite(chatCtx) ? chatCtx : 65536)
 		updateSetting("autocompleteRequestTimeoutMs", chatTimeout)
 	}, [chatOllamaConfig, apiConfiguration])
 

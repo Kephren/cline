@@ -70,7 +70,7 @@ describe("getEffectiveAutocompleteConfig", () => {
 		expect(config.enabled).toBe(true)
 		expect(config.baseUrl).toBe("http://localhost:11434")
 		expect(config.modelId).toBeUndefined()
-		expect(config.numCtx).toBe(4096)
+		expect(config.numCtx).toBe(65536)
 		expect(config.requestTimeoutMs).toBe(20000)
 	})
 })

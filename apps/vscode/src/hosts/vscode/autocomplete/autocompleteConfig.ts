@@ -91,7 +91,7 @@ export async function getEffectiveAutocompleteConfig(provider: StateProviderLike
 		ollamaFromProvidersJson?.apiKey ||
 		undefined
 	const modelId = stateManager?.getGlobalSettingsKey("autocompleteModelId") || ollamaFromProvidersJson?.model || undefined
-	const numCtx = stateManager?.getGlobalSettingsKey("autocompleteNumCtx") || ollamaFromProvidersJson?.contextWindow || 4096
+	const numCtx = stateManager?.getGlobalSettingsKey("autocompleteNumCtx") || ollamaFromProvidersJson?.contextWindow || 65536
 	const requestTimeoutMs =
 		(stateManager ? stateManager.getGlobalSettingsKey("autocompleteRequestTimeoutMs") : undefined) || 20000
 
