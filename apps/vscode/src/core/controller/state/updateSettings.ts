@@ -299,6 +299,10 @@ export async function updateSettings(controller: Controller, request: UpdateSett
 			)
 		}
 
+		if (request.autocompleteThink !== undefined) {
+			controller.stateManager.setGlobalState("autocompleteThink", request.autocompleteThink)
+		}
+
 		// Post updated state to webview
 		await controller.postStateToWebview()
 

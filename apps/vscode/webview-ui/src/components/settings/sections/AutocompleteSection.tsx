@@ -25,6 +25,7 @@ export const AutocompleteSection = ({ renderSectionHeader }: AutocompleteSection
 		autocompleteModelId,
 		autocompleteNumCtx,
 		autocompleteRequestTimeoutMs,
+		autocompleteThink = false,
 		apiConfiguration,
 	} = useExtensionState()
 
@@ -221,12 +222,14 @@ export const AutocompleteSection = ({ renderSectionHeader }: AutocompleteSection
 			apiConfiguration?.ollamaTunedContextSize ||
 			4096
 		const chatTimeout = apiConfiguration?.requestTimeoutMs || 5000
+		const chatThink = apiConfiguration?.ollamaReasoning ?? false
 
 		updateSetting("autocompleteShareWithChat", false)
 		updateSetting("autocompleteBaseUrl", chatBaseUrl)
 		updateSetting("autocompleteModelId", chatModelId)
 		updateSetting("autocompleteNumCtx", Number.isFinite(chatCtx) ? chatCtx : 65536)
 		updateSetting("autocompleteRequestTimeoutMs", chatTimeout)
+		updateSetting("autocompleteThink", chatThink)
 	}, [chatOllamaConfig, apiConfiguration])
 
 	return (
@@ -301,6 +304,16 @@ export const AutocompleteSection = ({ renderSectionHeader }: AutocompleteSection
 									? `${chatOllamaConfig.contextWindow}`
 									: apiConfiguration?.ollamaApiOptionsCtxNum ||
 										"Default (65536)"}
+							</span>
+						</div>
+						<div>
+							<span className="text-description">Think (Reasoning): </span>
+							<span>
+								{apiConfiguration?.ollamaReasoning !== undefined
+									? apiConfiguration.ollamaReasoning
+										? "Enabled"
+										: "Disabled"
+									: "Disabled (default)"}
 							</span>
 						</div>
 					</div>
@@ -421,6 +434,18 @@ export const AutocompleteSection = ({ renderSectionHeader }: AutocompleteSection
 							/>
 							<p className="text-xs text-description mt-0.5">
 								Maximum time in milliseconds to wait for a completion before cancelling.
+							</p>
+						</div>
+
+						{/* Think Option */}
+						<div>
+							<VSCodeCheckbox
+								checked={autocompleteThink}
+								onChange={(e: any) => updateSetting("autocompleteThink", e.target.checked === true)}>
+								Enable Think / Reasoning
+							</VSCodeCheckbox>
+							<p className="text-xs text-description mt-0.5">
+								Enables reasoning thinking tokens on supported models (e.g. DeepSeek-R1). Disabled by default for faster ghost-text completions.
 							</p>
 						</div>
 					</div>

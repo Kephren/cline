@@ -284,6 +284,7 @@ export const ExtensionStateContextProvider: React.FC<{
 		autocompleteModelId: undefined,
 		autocompleteNumCtx: undefined,
 		autocompleteRequestTimeoutMs: undefined,
+		autocompleteThink: false,
 		queuedPrompts: [],
 		taskHistory: [],
 		shouldShowAnnouncement: false,

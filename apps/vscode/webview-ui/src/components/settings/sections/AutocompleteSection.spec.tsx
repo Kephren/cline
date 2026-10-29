@@ -49,6 +49,7 @@ describe("AutocompleteSection", () => {
 		autocompleteModelId: "qwen2.5-coder:7b",
 		autocompleteNumCtx: 4096,
 		autocompleteRequestTimeoutMs: 5000,
+		autocompleteThink: false,
 		apiConfiguration: {
 			ollamaBaseUrl: "http://127.0.0.1:11434",
 			actModeOllamaModelId: "mannix/ornith-1.5-27b-a3b-coderx:Q3_K_M",
@@ -88,6 +89,7 @@ describe("AutocompleteSection", () => {
 		expect(updateSetting).toHaveBeenCalledWith("autocompleteModelId", "mannix/ornith-1.5-27b-a3b-coderx:Q3_K_M")
 		expect(updateSetting).toHaveBeenCalledWith("autocompleteNumCtx", 8192)
 		expect(updateSetting).toHaveBeenCalledWith("autocompleteRequestTimeoutMs", 5000)
+		expect(updateSetting).toHaveBeenCalledWith("autocompleteThink", false)
 	})
 
 	it("displays active chat settings when sharing is enabled", () => {
@@ -120,6 +122,19 @@ describe("AutocompleteSection", () => {
 
 		const gpuRatio = await screen.findByTestId("gpu-cpu-ratio")
 		expect(gpuRatio).toBeDefined()
+	})
+
+	it("renders Think option toggle in standalone configuration and toggles it", () => {
+		vi.mocked(useExtensionState).mockReturnValue({
+			...defaultState,
+			autocompleteShareWithChat: false,
+			autocompleteThink: false,
+		} as any)
+		render(<AutocompleteSection renderSectionHeader={() => <div>Header</div>} />)
+		const thinkCheckbox = screen.getByText("Enable Think / Reasoning")
+		expect(thinkCheckbox).toBeDefined()
+		fireEvent.click(thinkCheckbox)
+		expect(updateSetting).toHaveBeenCalledWith("autocompleteThink", true)
 	})
 })
 

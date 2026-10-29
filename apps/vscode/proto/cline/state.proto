@@ -309,6 +309,7 @@ message Settings {
   optional string autocomplete_model_id = 206;
   optional int32 autocomplete_num_ctx = 207;
   optional int32 autocomplete_request_timeout_ms = 208;
+  optional bool autocomplete_think = 209;
 }
 
 message State {
@@ -461,6 +462,7 @@ message UpdateSettingsRequest {
   optional string autocomplete_model_id = 51;
   optional int32 autocomplete_num_ctx = 52;
   optional int32 autocomplete_request_timeout_ms = 53;
+  optional bool autocomplete_think = 54;
 }
 
 message UpdateTerminalConnectionTimeoutRequest {

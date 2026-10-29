@@ -26,6 +26,7 @@ describe("getEffectiveAutocompleteConfig", () => {
 		expect(config.modelId).toBe("qwen2.5-coder:7b")
 		expect(config.numCtx).toBe(8192)
 		expect(config.requestTimeoutMs).toBe(3000)
+		expect(config.think).toBe(false)
 	})
 
 	it("returns shared chat Ollama settings when autocompleteShareWithChat is true", async () => {
@@ -57,6 +58,7 @@ describe("getEffectiveAutocompleteConfig", () => {
 		expect(config.modelId).toBe("mannix/ornith-1.5-27b-a3b-coderx:Q3_K_M")
 		expect(config.numCtx).toBe(16384)
 		expect(config.requestTimeoutMs).toBe(7000)
+		expect(config.think).toBe(false)
 	})
 
 	it("falls back to default values when configuration is empty", async () => {
@@ -72,5 +74,23 @@ describe("getEffectiveAutocompleteConfig", () => {
 		expect(config.modelId).toBeUndefined()
 		expect(config.numCtx).toBe(65536)
 		expect(config.requestTimeoutMs).toBe(20000)
+		expect(config.think).toBe(false)
+	})
+
+	it("respects autocompleteThink when enabled", async () => {
+		const mockStateManager = {
+			getGlobalSettingsKey: (key: string) => {
+				const settings: Record<string, any> = {
+					autocompleteEnabled: true,
+					autocompleteShareWithChat: false,
+					autocompleteThink: true,
+				}
+				return settings[key]
+			},
+			getSecretKey: async () => undefined,
+		}
+
+		const config = await getEffectiveAutocompleteConfig({ stateManager: mockStateManager })
+		expect(config.think).toBe(true)
 	})
 })

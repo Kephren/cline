@@ -58,6 +58,7 @@ export async function getStateToPostToWebview(controller: {
 	const autocompleteModelId = stateManager.getGlobalSettingsKey("autocompleteModelId")
 	const autocompleteNumCtx = stateManager.getGlobalSettingsKey("autocompleteNumCtx")
 	const autocompleteRequestTimeoutMs = stateManager.getGlobalSettingsKey("autocompleteRequestTimeoutMs")
+	const autocompleteThink = stateManager.getGlobalSettingsKey("autocompleteThink") ?? false
 	const planActSeparateModelsSetting = stateManager.getGlobalSettingsKey("planActSeparateModelsSetting")
 	const enableCheckpointsSetting = stateManager.getGlobalSettingsKey("enableCheckpointsSetting")
 	const globalClineRulesToggles = stateManager.getGlobalStateKey("globalClineRulesToggles")
@@ -201,5 +202,6 @@ export async function getStateToPostToWebview(controller: {
 		autocompleteModelId,
 		autocompleteNumCtx,
 		autocompleteRequestTimeoutMs,
+		autocompleteThink,
 	} as ExtensionState
 }

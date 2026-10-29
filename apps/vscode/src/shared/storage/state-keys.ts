@@ -325,6 +325,7 @@ const USER_SETTINGS_FIELDS = {
 	autocompleteModelId: { default: undefined as string | undefined },
 	autocompleteNumCtx: { default: undefined as number | undefined },
 	autocompleteRequestTimeoutMs: { default: undefined as number | undefined },
+	autocompleteThink: { default: false as boolean },
 } satisfies FieldDefinitions
 
 const SETTINGS_FIELDS = { ...API_HANDLER_SETTINGS_FIELDS, ...USER_SETTINGS_FIELDS }

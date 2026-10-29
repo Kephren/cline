@@ -165,6 +165,7 @@ export interface ExtensionState {
 	autocompleteModelId?: string
 	autocompleteNumCtx?: number
 	autocompleteRequestTimeoutMs?: number
+	autocompleteThink?: boolean
 }
 
 /**

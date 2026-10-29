@@ -182,6 +182,7 @@ Cline includes built-in inline code autocomplete for Visual Studio Code, providi
 - **Private & Local Code Completion**: Generates code suggestions in real time as you type, running 100% locally on your machine or private Ollama instance with zero code or telemetry leaving your environment.
 - **Fill-in-the-Middle (FIM) Support**: Uses standard FIM formatting (`<|fim_prefix|>`, `<|fim_suffix|>`, `<|fim_middle|>`) to analyze both prefix and suffix around your cursor, delivering accurate completions compatible with popular code models such as `qwen2.5-coder`, `deepseek-coder`, `starcoder2`, and `codellama`.
 - **Large Context Window (Default 64K)**: Pre-configured with a default context window of **65,536 tokens** (`64K`) and quick presets (2K, 4K, 8K, 16K, 32K, 64K). The provider allocates context proportionally (approx. 80% prefix / 20% suffix) so completions take advantage of large files without premature truncation.
+- **Think / Reasoning Option**: Includes an optional `Think` setting for reasoning models (such as DeepSeek-R1 or reasoning-enabled fine-tunes), defaulting to `false` so ghost text renders with zero reasoning overhead and minimal latency.
 - **Flexible Configuration (Shared or Standalone)**:
   - **Shared with Chat**: Automatically inherits the Ollama server URL, credentials, and model configured for your Cline Chat assistant.
   - **Standalone Configuration**: Dedicate a separate, specialized code model for real-time autocomplete while reserving larger models for chat and plan/act modes.

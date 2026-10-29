@@ -5,6 +5,7 @@ export interface AutocompleteConfig {
 	modelId?: string
 	numCtx: number
 	requestTimeoutMs: number
+	think: boolean
 }
 
 export interface StateManagerLike {
@@ -73,6 +74,12 @@ export async function getEffectiveAutocompleteConfig(provider: StateProviderLike
 			(stateManager ? stateManager.getGlobalSettingsKey("requestTimeoutMs") : undefined) ||
 			20000
 
+		const chatThink =
+			(typeof apiConfig?.ollamaReasoning === "boolean" ? apiConfig.ollamaReasoning : undefined) ??
+			(stateManager ? stateManager.getGlobalSettingsKey("ollamaReasoning") : undefined) ??
+			(stateManager ? stateManager.getGlobalSettingsKey("autocompleteThink") : undefined) ??
+			false
+
 		return {
 			enabled,
 			baseUrl,
@@ -80,6 +87,7 @@ export async function getEffectiveAutocompleteConfig(provider: StateProviderLike
 			modelId,
 			numCtx,
 			requestTimeoutMs: chatTimeout,
+			think: chatThink,
 		}
 	}
 
@@ -94,6 +102,7 @@ export async function getEffectiveAutocompleteConfig(provider: StateProviderLike
 	const numCtx = stateManager?.getGlobalSettingsKey("autocompleteNumCtx") || ollamaFromProvidersJson?.contextWindow || 65536
 	const requestTimeoutMs =
 		(stateManager ? stateManager.getGlobalSettingsKey("autocompleteRequestTimeoutMs") : undefined) || 20000
+	const think = stateManager?.getGlobalSettingsKey("autocompleteThink") ?? false
 
 	return {
 		enabled,
@@ -102,5 +111,6 @@ export async function getEffectiveAutocompleteConfig(provider: StateProviderLike
 		modelId,
 		numCtx,
 		requestTimeoutMs,
+		think,
 	}
 }

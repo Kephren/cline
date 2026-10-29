@@ -1,7 +1,10 @@
 const noop = () => undefined
 
 export const version = "test"
-export const commands = { executeCommand: async () => undefined }
+export const commands = {
+	executeCommand: async () => undefined,
+	registerCommand: () => ({ dispose: noop }),
+}
 export const env = {
 	clipboard: {
 		readText: async () => "",
@@ -36,8 +39,18 @@ export const window = {
 		dispose: noop,
 	}),
 	createTextEditorDecorationType: (_options?: unknown) => ({ key: "mock-decoration-type", dispose: noop }),
+	createStatusBarItem: (_alignment?: unknown, _priority?: unknown) => ({
+		text: "",
+		color: undefined,
+		tooltip: undefined,
+		command: "",
+		show: noop,
+		hide: noop,
+		dispose: noop,
+	}),
 	onDidChangeActiveTextEditor: () => ({ dispose: noop }),
 	onDidChangeVisibleTextEditors: () => ({ dispose: noop }),
+	onDidChangeWindowState: () => ({ dispose: noop }),
 }
 
 export class Position {
@@ -86,6 +99,13 @@ export class CancellationTokenSource {
 }
 export class CancellationError extends Error {}
 export class Disposable {
+	static from(...disposables: { dispose(): any }[]): Disposable {
+		return new Disposable(() => {
+			for (const d of disposables) {
+				d?.dispose?.()
+			}
+		})
+	}
 	constructor(public dispose: () => void = noop) {}
 }
 export class EventEmitter<T = unknown> {
@@ -100,7 +120,13 @@ export class RelativePattern {
 	) {}
 }
 export class MarkdownString {
-	constructor(public value = "") {}
+	isTrusted = false
+	supportThemeIcons = false
+	constructor(public value = "", public supportThemeIconsArg = false) {}
+	appendMarkdown(value: string) {
+		this.value += value
+		return this
+	}
 }
 export class InlineCompletionItem {
 	constructor(
@@ -129,6 +155,11 @@ export const InputBoxValidationSeverity = { Info: 1, Warning: 2, Error: 3 }
 export const CodeActionKind = { QuickFix: { value: "quickfix" } }
 export const CodeActionTriggerKind = { Invoke: 1, Automatic: 2 }
 export const DocumentHighlightKind = { Text: 0, Read: 1, Write: 2 }
+export const StatusBarAlignment = { Left: 1, Right: 2 }
+
+export const languages = {
+	registerInlineCompletionItemProvider: () => ({ dispose: () => {} }),
+}
 
 export default {
 	version,
@@ -136,6 +167,7 @@ export default {
 	env,
 	workspace,
 	window,
+	languages,
 	Position,
 	Range,
 	Selection,
@@ -166,4 +198,5 @@ export default {
 	CodeActionKind,
 	CodeActionTriggerKind,
 	DocumentHighlightKind,
+	StatusBarAlignment,
 }
