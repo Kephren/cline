@@ -298,9 +298,9 @@ export const AutocompleteSection = ({ renderSectionHeader }: AutocompleteSection
 							<span className="text-description">Context Window: </span>
 							<span>
 								{chatOllamaConfig?.contextWindow
-									? `${chatOllamaConfig.contextWindow} (clamped to 8K for speed)`
+									? `${chatOllamaConfig.contextWindow}`
 									: apiConfiguration?.ollamaApiOptionsCtxNum ||
-										"Default (clamped to 8K for speed)"}
+										"Default (65536)"}
 							</span>
 						</div>
 					</div>
@@ -376,7 +376,7 @@ export const AutocompleteSection = ({ renderSectionHeader }: AutocompleteSection
 							<label className="block text-xs font-semibold mb-1">Context Window (num_ctx)</label>
 							<VSCodeTextField
 								value={autocompleteNumCtx ? String(autocompleteNumCtx) : ""}
-								placeholder="Default: 4096 (Max recommended: 8192)"
+								placeholder="Default: 65536"
 								onInput={(e: any) => {
 									const val = Number.parseInt(e.target.value, 10)
 									updateSetting("autocompleteNumCtx", Number.isFinite(val) && val > 0 ? val : undefined)
@@ -400,7 +400,7 @@ export const AutocompleteSection = ({ renderSectionHeader }: AutocompleteSection
 								))}
 							</div>
 							<p className="text-xs text-description mt-1">
-								Smaller context windows (2K–8K) respond much faster for real-time ghost text completions.
+								Context window size in tokens allocated for autocomplete completions.
 							</p>
 						</div>
 
