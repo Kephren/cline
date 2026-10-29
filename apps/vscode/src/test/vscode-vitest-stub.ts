@@ -102,6 +102,16 @@ export class RelativePattern {
 export class MarkdownString {
 	constructor(public value = "") {}
 }
+export class InlineCompletionItem {
+	constructor(
+		public insertText: string,
+		public range?: Range,
+		public command?: unknown,
+	) {}
+}
+export class InlineCompletionList {
+	constructor(public items: InlineCompletionItem[] = []) {}
+}
 
 export const ExtensionKind = { UI: 1, Workspace: 2 }
 export const ExtensionMode = { Production: 1, Development: 2, Test: 3 }
@@ -138,6 +148,8 @@ export default {
 	EventEmitter,
 	RelativePattern,
 	MarkdownString,
+	InlineCompletionItem,
+	InlineCompletionList,
 	ExtensionKind,
 	ExtensionMode,
 	ColorThemeKind,

@@ -9,6 +9,7 @@ import {
 	Info,
 	type LucideIcon,
 	SlidersHorizontal,
+	Sparkles,
 	SquareTerminal,
 	Wrench,
 } from "lucide-react"
@@ -26,6 +27,7 @@ import SectionHeader from "./SectionHeader"
 import SettingsTargetHighlight from "./SettingsTargetHighlight"
 import AboutSection from "./sections/AboutSection"
 import ApiConfigurationSection from "./sections/ApiConfigurationSection"
+import AutocompleteSection from "./sections/AutocompleteSection"
 import DebugSection from "./sections/DebugSection"
 import FeatureSettingsSection from "./sections/FeatureSettingsSection"
 import GeneralSettingsSection from "./sections/GeneralSettingsSection"
@@ -36,7 +38,15 @@ import { getNextSettingsNavigationRequestId, resolveSettingsTarget, type Setting
 const IS_DEV = process.env.IS_DEV
 
 // Tab definitions
-type SettingsTabID = "api-config" | "features" | "terminal" | "general" | "about" | "debug" | "remote-config"
+type SettingsTabID =
+	| "api-config"
+	| "autocomplete"
+	| "features"
+	| "terminal"
+	| "general"
+	| "about"
+	| "debug"
+	| "remote-config"
 interface SettingsTab {
 	id: SettingsTabID
 	name: string
@@ -53,6 +63,13 @@ const SETTINGS_TABS: SettingsTab[] = [
 		tooltipText: "API Configuration",
 		headerText: "API Configuration",
 		icon: SlidersHorizontal,
+	},
+	{
+		id: "autocomplete",
+		name: "Autocomplete",
+		tooltipText: "Inline Autocomplete Settings",
+		headerText: "Inline Autocomplete",
+		icon: Sparkles,
 	},
 	{
 		id: "features",
@@ -130,6 +147,7 @@ const SettingsView = ({ navigationRequest, onDone }: SettingsViewProps) => {
 	const TAB_CONTENT_MAP: Record<SettingsTabID, React.FC<any>> = useMemo(
 		() => ({
 			"api-config": ApiConfigurationSection,
+			autocomplete: AutocompleteSection,
 			general: GeneralSettingsSection,
 			features: FeatureSettingsSection,
 			terminal: TerminalSettingsSection,

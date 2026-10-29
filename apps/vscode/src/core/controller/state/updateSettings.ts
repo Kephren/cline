@@ -268,6 +268,37 @@ export async function updateSettings(controller: Controller, request: UpdateSett
 			controller.stateManager.setGlobalState("showFeatureTips", request.showFeatureTips)
 		}
 
+		if (request.autocompleteEnabled !== undefined) {
+			controller.stateManager.setGlobalState("autocompleteEnabled", request.autocompleteEnabled)
+		}
+
+		if (request.autocompleteShareWithChat !== undefined) {
+			controller.stateManager.setGlobalState("autocompleteShareWithChat", request.autocompleteShareWithChat)
+		}
+
+		if (request.autocompleteBaseUrl !== undefined) {
+			controller.stateManager.setGlobalState("autocompleteBaseUrl", request.autocompleteBaseUrl || undefined)
+		}
+
+		if (request.autocompleteApiKey !== undefined) {
+			await controller.stateManager.setSecret("autocompleteApiKey", request.autocompleteApiKey || undefined)
+		}
+
+		if (request.autocompleteModelId !== undefined) {
+			controller.stateManager.setGlobalState("autocompleteModelId", request.autocompleteModelId || undefined)
+		}
+
+		if (request.autocompleteNumCtx !== undefined) {
+			controller.stateManager.setGlobalState("autocompleteNumCtx", request.autocompleteNumCtx || undefined)
+		}
+
+		if (request.autocompleteRequestTimeoutMs !== undefined) {
+			controller.stateManager.setGlobalState(
+				"autocompleteRequestTimeoutMs",
+				request.autocompleteRequestTimeoutMs || undefined,
+			)
+		}
+
 		// Post updated state to webview
 		await controller.postStateToWebview()
 

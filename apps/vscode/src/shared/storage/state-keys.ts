@@ -317,6 +317,14 @@ const USER_SETTINGS_FIELDS = {
 	openTelemetryLogBatchSize: { default: 512 as number | undefined },
 	openTelemetryLogBatchTimeout: { default: 5000 as number | undefined },
 	openTelemetryLogMaxQueueSize: { default: 2048 as number | undefined },
+
+	// Autocomplete configuration
+	autocompleteEnabled: { default: true as boolean },
+	autocompleteShareWithChat: { default: true as boolean },
+	autocompleteBaseUrl: { default: undefined as string | undefined },
+	autocompleteModelId: { default: undefined as string | undefined },
+	autocompleteNumCtx: { default: undefined as number | undefined },
+	autocompleteRequestTimeoutMs: { default: undefined as number | undefined },
 } satisfies FieldDefinitions
 
 const SETTINGS_FIELDS = { ...API_HANDLER_SETTINGS_FIELDS, ...USER_SETTINGS_FIELDS }
@@ -341,6 +349,7 @@ const SECRETS_KEYS = [
 	"geminiApiKey",
 	"openAiNativeApiKey",
 	"ollamaApiKey",
+	"autocompleteApiKey",
 	"deepSeekApiKey",
 	"requestyApiKey",
 	"togetherApiKey",

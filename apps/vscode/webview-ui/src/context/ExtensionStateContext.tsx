@@ -277,6 +277,13 @@ export const ExtensionStateContextProvider: React.FC<{
 	const [state, setState] = useState<ExtensionState>({
 		version: "",
 		clineMessages: [],
+		autocompleteEnabled: true,
+		autocompleteShareWithChat: true,
+		autocompleteBaseUrl: undefined,
+		autocompleteApiKey: undefined,
+		autocompleteModelId: undefined,
+		autocompleteNumCtx: undefined,
+		autocompleteRequestTimeoutMs: undefined,
 		queuedPrompts: [],
 		taskHistory: [],
 		shouldShowAnnouncement: false,

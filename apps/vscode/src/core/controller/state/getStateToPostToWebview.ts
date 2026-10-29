@@ -51,6 +51,13 @@ export async function getStateToPostToWebview(controller: {
 	const mcpMarketplaceEnabled = stateManager.getGlobalStateKey("mcpMarketplaceEnabled")
 	const mcpDisplayMode = stateManager.getGlobalStateKey("mcpDisplayMode")
 	const telemetrySetting = stateManager.getGlobalSettingsKey("telemetrySetting")
+	const autocompleteEnabled = stateManager.getGlobalSettingsKey("autocompleteEnabled") ?? true
+	const autocompleteShareWithChat = stateManager.getGlobalSettingsKey("autocompleteShareWithChat") ?? true
+	const autocompleteBaseUrl = stateManager.getGlobalSettingsKey("autocompleteBaseUrl")
+	const autocompleteApiKey = await stateManager.getSecretKey("autocompleteApiKey")
+	const autocompleteModelId = stateManager.getGlobalSettingsKey("autocompleteModelId")
+	const autocompleteNumCtx = stateManager.getGlobalSettingsKey("autocompleteNumCtx")
+	const autocompleteRequestTimeoutMs = stateManager.getGlobalSettingsKey("autocompleteRequestTimeoutMs")
 	const planActSeparateModelsSetting = stateManager.getGlobalSettingsKey("planActSeparateModelsSetting")
 	const enableCheckpointsSetting = stateManager.getGlobalSettingsKey("enableCheckpointsSetting")
 	const globalClineRulesToggles = stateManager.getGlobalStateKey("globalClineRulesToggles")
@@ -187,5 +194,12 @@ export async function getStateToPostToWebview(controller: {
 		banners,
 		welcomeBanners,
 		openAiCodexIsAuthenticated,
+		autocompleteEnabled,
+		autocompleteShareWithChat,
+		autocompleteBaseUrl,
+		autocompleteApiKey,
+		autocompleteModelId,
+		autocompleteNumCtx,
+		autocompleteRequestTimeoutMs,
 	} as ExtensionState
 }
