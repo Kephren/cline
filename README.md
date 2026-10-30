@@ -2,11 +2,20 @@
   <img src="assets/icons/icon.png" width="80" alt="Cline" />
 </p>
 
-<h1 align="center">Cline, now with more K</h1>
+<h1 align="center">Kline — Cline, Now With More K</h1>
 
 <p align="center">
-The open source coding agent in your IDE, terminal, & desktop! Expanded to have a focus on usage with Ollama as a power user. Control of multiple parameter and includes context maximization depending if the model can full fully within GPU VRAM.
+  <strong>The open-source coding agent in your IDE, terminal, and desktop — supercharged for local LLM &amp; Ollama power users.</strong>
 </p>
+
+> ### 🚀 A Game Changer for Local LLM & Ollama Users
+>
+> Standard AI coding assistants treat local models as an afterthought—locking you into tiny default context windows, hiding hardware utilization, unloading your weights mid-session, and choking on large files. **Kline** re-engineers the Cline experience from the ground up for people running local and self-hosted models via **Ollama**:
+>
+> - **True Hardware-Aware Autonomy**: Automatically probe and calibrate the exact maximum context window that fits **100% into your GPU VRAM** (`GPU Context Tune`), monitor live GPU/CPU layer splits and real-time `tok/s` inference telemetry right inside the chat bar, and pin models in VRAM (`keep_alive: -1`) so you never wait on cold starts.
+> - **Local Inline Ghost-Text Autocomplete**: Built-in Fill-in-the-Middle (FIM) code completion powered by your Ollama instance with a **64K default context window**, startup VRAM preloading, status bar hover telemetry, and zero cloud round-trips.
+> - **Unthrottled Local Context & Tooling**: 4× larger file-read, command-output, and search buffers (`192,000` chars) plus full exposure of Ollama sampling and hardware parameters (`num_ctx` up to 1M, `num_gpu`, `num_batch`, `num_predict`, `min_p`, `top_k`, `top_p`, `repeat_penalty`, `seed`, and `think` toggles).
+> - **Battle-Tested Networking (Using *Anything* But `fetch`)**: Every Ollama network path has been stripped of Node/Electron's dumpster-fire WHATWG `fetch` / Undici stack and routed over raw Node HTTP sockets (`adapter: "http"`). If you've ever lost days on an Apple Silicon Mac fighting `"RequestInit: duplex option is required while sending body"` or random stream timeouts, rest easy—`fetch` has been taken out back where it belongs.
 
 <div align="center">
 
@@ -166,36 +175,75 @@ Cline is not locked to a single AI provider. Use whichever model fits your workf
 
 ## First-Class Local Model & Ollama Support
 
-Cline provides deep, native support for running local models via Ollama with dedicated controls and real-time hardware telemetry built directly into the interface:
+Kline provides deep, native support for running local models via Ollama with dedicated controls and real-time hardware telemetry built directly into the interface:
 
-- **In-Chat Model Switching & Inspection**: Select and switch local Ollama models on the fly directly from the chat toolbar without leaving your conversation. View inspected model architecture details (parameter size, quantization level, family, context window) along with verified badges for native tool calling and multimodal vision support.
-- **VRAM Autotuning**: Automatically calibrate your context window size with one click (`GPU Context Tune`). The autotuner probes your hardware in fine-grained steps to find the optimal context size that fits 100% into GPU VRAM, preventing performance degradation from CPU memory spillover.
-- **Hardware & Inference Telemetry**: Monitor real-time GPU vs. CPU layer allocation and VRAM usage with dynamic color-coded indicators, alongside real-time inference speed (tokens/sec decode and prefill), token counts, duration, and session token usage.
-- **Granular Context Control**: Fine-tune your context window using a precision slider with increments from 512 up to 1M tokens, complete with snap-to-autotuned indicators and native context limit warnings.
-- **VRAM Lifecycle Management**: Free GPU VRAM immediately with one-click model unloading (`keep_alive: 0`), or preload and warm up model weights into VRAM before running tasks (`keep_alive: 10m`).
-- **Power-User Sampling & Generation Controls**: Directly adjust temperature, Min-P sampling, Top-P, Top-K, repeat penalty, max generation tokens (`num_predict`), GPU offload layers (`num_gpu`), deterministic seed (for reproducible completions), and reasoning/thinking mode toggles for models like DeepSeek-R1.
+- **In-Chat Model Switching & Inspection**: Select and switch local Ollama models on the fly directly from the chat toolbar without leaving your conversation. View inspected model architecture details (parameter size, quantization level, family, native context window) along with verified badges for native tool calling and multimodal vision support.
+- **VRAM Context Autotuning (`GPU Context Tune`)**: Automatically calibrate your context window size with one click. The autotuner probes your hardware in fine-grained steps to find the maximum context size that fits **100% into GPU VRAM**, preventing performance collapse from silent CPU memory spillover.
+- **Live Hardware & Inference Telemetry**: Monitor real-time GPU vs. CPU layer allocation (`100% GPU` badge) and active VRAM usage in GB with dynamic color-coded indicators, alongside live inference speed (`tok/s` decode and prefill), token counts, request duration, and cumulative session token usage.
+- **Granular Context Control**: Fine-tune your context window using a precision slider with increments from `512` up to `1M` tokens, complete with quick-select presets, snap-to-autotuned indicators, and native context limit warnings.
+- **VRAM Lifecycle Management**: Free GPU VRAM immediately with one-click model unloading (`keep_alive: 0`), or preload and warm up model weights into VRAM before running tasks (`keep_alive: 10m` in chat or `keep_alive: -1` for persistent pinning).
+- **Power-User Sampling & Hardware Controls**: Directly adjust `temperature`, `min_p` sampling, `top_p`, `top_k`, `repeat_penalty`, max generation tokens (`num_predict`), GPU offload layers (`num_gpu`), prompt batch size (`num_batch`), deterministic `seed` (for reproducible completions), and reasoning/thinking mode (`think`) toggles for models like DeepSeek-R1 and Qwen3.
+- **Expanded 4× Tool Output Limits**: File read, terminal command output, and search result limits have been expanded from `48,000` to **`192,000` characters** so high-context local models can inspect large files and logs without aggressive middle-truncation.
+- **Zero-`fetch` Native Socket Transport**: All Ollama endpoints (model listing, status polling, context probing, preloading, unloading, and completions) communicate exclusively over Node's native `http`/`https` TCP sockets (`adapter: "http"`), completely bypassing Electron's flaky `fetch`/Undici layer.
 
 ## Local Inline Autocomplete (Ghost Text)
 
-Cline includes built-in inline code autocomplete for Visual Studio Code, providing fast, intelligent ghost-text completions powered entirely by your local Ollama models:
+Kline includes built-in inline code autocomplete for Visual Studio Code, providing fast, intelligent ghost-text completions powered entirely by your local or remote Ollama models:
 
-- **Private & Local Code Completion**: Generates code suggestions in real time as you type, running 100% locally on your machine or private Ollama instance with zero code or telemetry leaving your environment.
+- **Private & Local Code Completion**: Generates code suggestions in real time as you type, running 100% against your local machine or private Ollama server with zero code or telemetry leaving your environment.
 - **Fill-in-the-Middle (FIM) Support**: Uses standard FIM formatting (`<|fim_prefix|>`, `<|fim_suffix|>`, `<|fim_middle|>`) to analyze both prefix and suffix around your cursor, delivering accurate completions compatible with popular code models such as `qwen2.5-coder`, `deepseek-coder`, `starcoder2`, and `codellama`.
-- **Large Context Window (Default 64K)**: Pre-configured with a default context window of **65,536 tokens** (`64K`) and quick presets (2K, 4K, 8K, 16K, 32K, 64K). The provider allocates context proportionally (approx. 80% prefix / 20% suffix) so completions take advantage of large files without premature truncation.
-- **Think / Reasoning Option**: Includes an optional `Think` setting for reasoning models (such as DeepSeek-R1 or reasoning-enabled fine-tunes), defaulting to `false` so ghost text renders with zero reasoning overhead and minimal latency.
+- **Large Context Window (Default 64K)**: Pre-configured with a default context window of **65,536 tokens** (`64K`) and quick presets (`2K`, `4K`, `8K`, `16K`, `32K`, `64K`). The provider allocates context proportionally (approx. 80% prefix / 20% suffix) so completions take advantage of large files without premature truncation.
+- **Persistent VRAM Pinning (`keep_alive: -1`) & Startup Preload**: Automatically preloads your autocomplete model into VRAM when the extension starts (including over remote/SSH workspaces) with `keep_alive: -1`. Even if an inline request times out while warming a large model, Kline retains the model in memory so it is never unloaded behind your back unless you explicitly click **Free VRAM**.
+- **Think / Reasoning Option**: Includes a dedicated `Think` checkbox for reasoning models, defaulting to `false` (and automatically stripping stray `<think>` tags) so ghost text renders with zero reasoning overhead and minimal latency.
+- **Status Bar Hover Telemetry & Quick Toggle**: Hover over `$(sparkle) Cline Autocomplete` in the VS Code status bar at any time to inspect active status, model name, formatted context window size (e.g., `65,536 (64K)`), and endpoint URL—or click it to toggle autocomplete on/off.
 - **Flexible Configuration (Shared or Standalone)**:
-  - **Shared with Chat**: Automatically inherits the Ollama server URL, credentials, and model configured for your Cline Chat assistant.
-  - **Standalone Configuration**: Dedicate a separate, specialized code model for real-time autocomplete while reserving larger models for chat and plan/act modes.
-  - **Copy from Chat**: Easily bootstrap your standalone configuration from current Chat Ollama settings with one click.
+  - **Shared with Chat**: Automatically inherits the Ollama server URL, credentials, and model configured for your Chat assistant.
+  - **Standalone Configuration**: Dedicate a separate, fast FIM code model for real-time autocomplete while reserving heavier models for chat and plan/act modes.
+  - **Copy from Chat**: Bootstrap your standalone configuration from your current Chat Ollama settings with a single click.
 - **Model Memory Management (VRAM)**:
   - **Live Hardware Telemetry**: Displays real-time GPU offload percentage and VRAM usage directly in the autocomplete settings pane.
-  - **Preload Weights**: Warm up weights into GPU VRAM ahead of time (`keep_alive: 30m`) so inline suggestions appear without initial cold-start latency.
-  - **Free VRAM**: Instantly unload model weights from GPU memory (`keep_alive: 0`) when you need to free resources.
+  - **Preload Weights**: Warm up and pin weights into GPU VRAM (`keep_alive: -1`) so inline suggestions appear with zero cold-start latency.
+  - **Free VRAM**: Instantly unload model weights from GPU memory (`keep_alive: 0`) when you need to reclaim resources.
 - **Controls & Keybindings**:
   - Automatically displays ghost suggestions while typing in any open file.
   - Manually trigger suggestions at any time using `Alt + \` (Linux/Windows) or `Option + \` (macOS).
   - Accept with `Tab` or dismiss with `Esc`.
-  - Toggle on/off from the VS Code status bar (`$(sparkle) Cline Auto`) or via Cline Settings &rarr; **Autocomplete**.
+  - Toggle on/off from the VS Code status bar (`$(sparkle) Cline Autocomplete`) or via Settings &rarr; **Autocomplete**.
+
+## Building & Packaging from Source (macOS Apple Silicon & Corporate Proxy Ready)
+
+The build system has been hardened so you can build and package the VS Code extension (`cline.vsix`) cleanly on **Apple Silicon (M1/M2/M3/M4) Macs**, Linux, and Windows—even on locked-down corporate laptops behind SSL-intercepting proxies (such as Cisco Umbrella or Zscaler):
+
+- **Native Apple Silicon (`arm64`) `protoc` Resolution**: `apps/vscode/scripts/build-proto.mjs` automatically discovers native system `protoc` binaries (`/opt/homebrew/bin/protoc`, `/usr/local/bin/protoc`, `$PROTOC`, or system `PATH`) before falling back to `grpc-tools`. This eliminates Rosetta 2 emulation requirements and `node-pre-gyp` binary download failures on M-series Macs.
+- **Corporate Proxy / SSL Certificate Fallback**: Build scripts (`download-ripgrep.mjs` and `build-proto.mjs`) automatically fall back to system `curl -fsSL` whenever Node's built-in HTTPS client rejects corporate proxy SSL certificates.
+- **Optional Proto Linting**: `proto-lint.sh` checks for `buf` and gracefully skips linting if `buf` is not installed locally.
+- **Hassle-Free VSIX Packaging**: Pre-configured packaging scripts bypass `vsce` dependency pruning bugs and false-positive secret-scanner blocks (`--no-dependencies --allow-package-secrets sendgrid`).
+
+### Quick Build Steps (macOS / Linux)
+
+1. **Install Prerequisites**:
+   - [Bun 1.4.2+](https://bun.sh) and Node.js `>=22`
+   - On macOS (Apple Silicon), install native `protobuf` via Homebrew so `build-proto.mjs` uses native ARM64 `protoc`:
+     ```bash
+     brew install protobuf
+     ```
+2. **Install Dependencies & Build SDK**:
+   ```bash
+   bun install
+   bun run build:sdk
+   ```
+3. **Build & Package the VS Code Extension (`.vsix`)**:
+   ```bash
+   # From the repo root (or run `bun run package:quick` inside apps/vscode):
+   cd apps/vscode
+   bun run protos
+   bun run package:quick
+   ```
+   This compiles the webview UI, bundles the extension, and outputs **`apps/vscode/dist/cline.vsix`**.
+4. **Install into VS Code**:
+   ```bash
+   code --install-extension apps/vscode/dist/cline.vsix --force
+   ```
 
 ## Extend With Plugins or MCP Servers
 
