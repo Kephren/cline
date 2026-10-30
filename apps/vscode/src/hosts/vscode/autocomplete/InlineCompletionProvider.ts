@@ -52,7 +52,8 @@ export class ClineInlineCompletionProvider implements vscode.InlineCompletionIte
 					headers,
 					body: JSON.stringify(payload),
 					signal: controller.signal,
-				})
+					duplex: "half",
+				} as RequestInit)
 				if (response.ok) {
 					Logger.log(
 						`[ClineAutocomplete] Successfully preloaded ${effectiveConfig.modelId} with infinite keep-alive (-1)`,
@@ -181,7 +182,8 @@ export class ClineInlineCompletionProvider implements vscode.InlineCompletionIte
 				headers,
 				body: JSON.stringify(payload),
 				signal: abortController.signal,
-			})
+				duplex: "half",
+			} as RequestInit)
 
 			if (!response.ok) {
 				Logger.warn(`[ClineAutocomplete] Ollama returned status ${response.status}: ${response.statusText}`)

@@ -85,9 +85,11 @@ describe("ClineInlineCompletionProvider", () => {
 
 		let capturedUrl = ""
 		let capturedBody: any = null
+		let capturedInit: any = null
 
 		global.fetch = vi.fn().mockImplementation(async (url: string, init: any) => {
 			capturedUrl = url
+			capturedInit = init
 			capturedBody = JSON.parse(init.body)
 			return {
 				ok: true,
@@ -118,6 +120,7 @@ describe("ClineInlineCompletionProvider", () => {
 		)) as vscode.InlineCompletionList
 
 		expect(capturedUrl).toBe("http://localhost:11434/api/generate")
+		expect(capturedInit.duplex).toBe("half")
 		expect(capturedBody.model).toBe("mannix/ornith-1.5-27b-a3b-coderx:Q3_K_M")
 		expect(capturedBody.raw).toBe(true)
 		expect(capturedBody.think).toBe(false)
@@ -150,7 +153,9 @@ describe("ClineInlineCompletionProvider", () => {
 		}
 
 		let preloadBody: any = null
+		let preloadInit: any = null
 		global.fetch = vi.fn().mockImplementation(async (_url: string, init: any) => {
+			preloadInit = init
 			preloadBody = JSON.parse(init.body)
 			return {
 				ok: true,
@@ -162,6 +167,7 @@ describe("ClineInlineCompletionProvider", () => {
 		await provider.preloadOnStartup()
 
 		expect(preloadBody).toBeDefined()
+		expect(preloadInit.duplex).toBe("half")
 		expect(preloadBody.model).toBe("mannix/ornith-1.5-27b-a3b-coderx:Q3_K_M")
 		expect(preloadBody.keep_alive).toBe(-1)
 		expect(preloadBody.prompt).toBe("")
