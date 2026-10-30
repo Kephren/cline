@@ -106,6 +106,7 @@ message Secrets {
   optional string cline_api_key = 44;
   optional string openai_codex_oauth_credentials = 48;
   optional string wandb_api_key = 50;
+  optional string autocomplete_api_key = 51;
 }
 
 // NOTE: Add new fields under API_HANDLER_SETTINGS_FIELDS or USER_SETTINGS_FIELDS
@@ -289,6 +290,26 @@ message Settings {
   optional OpenRouterModelInfo act_mode_cline_pass_model_info = 186;
   optional bool cloud_sessions_enabled = 188;
   optional string open_telemetry_traces_exporter = 189;
+  optional int32 ollama_temperature = 190;
+  optional int32 ollama_min_p = 191;
+  optional bool ollama_seed_enabled = 192;
+  optional int32 ollama_seed_value = 193;
+  optional bool ollama_reasoning = 194;
+  optional bool ollama_is_tuned = 195;
+  optional int32 ollama_tuned_context_size = 196;
+  optional string ollama_tuned_model = 197;
+  optional int32 ollama_num_predict = 198;
+  optional int32 ollama_num_gpu = 199;
+  optional int32 ollama_top_p = 200;
+  optional int32 ollama_top_k = 201;
+  optional int32 ollama_repeat_penalty = 202;
+  optional bool autocomplete_enabled = 203;
+  optional bool autocomplete_share_with_chat = 204;
+  optional string autocomplete_base_url = 205;
+  optional string autocomplete_model_id = 206;
+  optional int32 autocomplete_num_ctx = 207;
+  optional int32 autocomplete_request_timeout_ms = 208;
+  optional bool autocomplete_think = 209;
 }
 
 message State {
@@ -434,6 +455,14 @@ message UpdateSettingsRequest {
   optional string compaction_strategy = 44;
   optional bool web_search_enabled = 45;
   optional bool cloud_sessions_enabled = 46;
+  optional bool autocomplete_enabled = 47;
+  optional bool autocomplete_share_with_chat = 48;
+  optional string autocomplete_base_url = 49;
+  optional string autocomplete_api_key = 50;
+  optional string autocomplete_model_id = 51;
+  optional int32 autocomplete_num_ctx = 52;
+  optional int32 autocomplete_request_timeout_ms = 53;
+  optional bool autocomplete_think = 54;
 }
 
 message UpdateTerminalConnectionTimeoutRequest {

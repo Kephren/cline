@@ -175,6 +175,28 @@ Cline provides deep, native support for running local models via Ollama with ded
 - **VRAM Lifecycle Management**: Free GPU VRAM immediately with one-click model unloading (`keep_alive: 0`), or preload and warm up model weights into VRAM before running tasks (`keep_alive: 10m`).
 - **Power-User Sampling & Generation Controls**: Directly adjust temperature, Min-P sampling, Top-P, Top-K, repeat penalty, max generation tokens (`num_predict`), GPU offload layers (`num_gpu`), deterministic seed (for reproducible completions), and reasoning/thinking mode toggles for models like DeepSeek-R1.
 
+## Local Inline Autocomplete (Ghost Text)
+
+Cline includes built-in inline code autocomplete for Visual Studio Code, providing fast, intelligent ghost-text completions powered entirely by your local Ollama models:
+
+- **Private & Local Code Completion**: Generates code suggestions in real time as you type, running 100% locally on your machine or private Ollama instance with zero code or telemetry leaving your environment.
+- **Fill-in-the-Middle (FIM) Support**: Uses standard FIM formatting (`<|fim_prefix|>`, `<|fim_suffix|>`, `<|fim_middle|>`) to analyze both prefix and suffix around your cursor, delivering accurate completions compatible with popular code models such as `qwen2.5-coder`, `deepseek-coder`, `starcoder2`, and `codellama`.
+- **Large Context Window (Default 64K)**: Pre-configured with a default context window of **65,536 tokens** (`64K`) and quick presets (2K, 4K, 8K, 16K, 32K, 64K). The provider allocates context proportionally (approx. 80% prefix / 20% suffix) so completions take advantage of large files without premature truncation.
+- **Think / Reasoning Option**: Includes an optional `Think` setting for reasoning models (such as DeepSeek-R1 or reasoning-enabled fine-tunes), defaulting to `false` so ghost text renders with zero reasoning overhead and minimal latency.
+- **Flexible Configuration (Shared or Standalone)**:
+  - **Shared with Chat**: Automatically inherits the Ollama server URL, credentials, and model configured for your Cline Chat assistant.
+  - **Standalone Configuration**: Dedicate a separate, specialized code model for real-time autocomplete while reserving larger models for chat and plan/act modes.
+  - **Copy from Chat**: Easily bootstrap your standalone configuration from current Chat Ollama settings with one click.
+- **Model Memory Management (VRAM)**:
+  - **Live Hardware Telemetry**: Displays real-time GPU offload percentage and VRAM usage directly in the autocomplete settings pane.
+  - **Preload Weights**: Warm up weights into GPU VRAM ahead of time (`keep_alive: 30m`) so inline suggestions appear without initial cold-start latency.
+  - **Free VRAM**: Instantly unload model weights from GPU memory (`keep_alive: 0`) when you need to free resources.
+- **Controls & Keybindings**:
+  - Automatically displays ghost suggestions while typing in any open file.
+  - Manually trigger suggestions at any time using `Alt + \` (Linux/Windows) or `Option + \` (macOS).
+  - Accept with `Tab` or dismiss with `Esc`.
+  - Toggle on/off from the VS Code status bar (`$(sparkle) Cline Auto`) or via Cline Settings &rarr; **Autocomplete**.
+
 ## Extend With Plugins or MCP Servers
 
 Extend Cline's capabilities with plugins. Using the SDK, register tools and lifecycle hooks programmatically through the plugin system for logging, auditing, policy enforcement, or adding domain-specific capabilities. Simple plugin example below.

@@ -137,7 +137,8 @@ export const fetch: typeof globalThis.fetch = (() => {
 		if (hasBody && (!requestInit || !("duplex" in requestInit))) {
 			requestInit = { ...requestInit, duplex: "half" } as RequestInit
 		}
-		return (mockFetch || baseFetch)(input, requestInit)
+		const fetchFn = mockFetch || (process.env.IS_STANDALONE === "true" ? baseFetch : globalThis.fetch)
+		return fetchFn(input, requestInit)
 	}) as typeof globalThis.fetch
 })()
 
@@ -196,6 +197,14 @@ export const fetchWithoutIdleTimeouts: typeof globalThis.fetch = ((
 	if (mockFetch) {
 		return mockFetch(input, init)
 	}
+	let requestInit = init
+	const hasBody = Boolean(
+		requestInit?.body != null ||
+			(typeof Request !== "undefined" && input instanceof Request && input.body != null),
+	)
+	if (hasBody && (!requestInit || !("duplex" in requestInit))) {
+		requestInit = { ...requestInit, duplex: "half" } as RequestInit
+	}
 	let dispatcher: Dispatcher
 	if (isLoopbackHost(input)) {
 		dispatcher = directDispatcher ??= new Agent(NO_IDLE_TIMEOUTS)
@@ -204,7 +213,7 @@ export const fetchWithoutIdleTimeouts: typeof globalThis.fetch = ((
 	}
 	return undiciFetch(
 		input as Parameters<typeof undiciFetch>[0],
-		{ ...init, dispatcher } as Parameters<typeof undiciFetch>[1],
+		{ ...requestInit, dispatcher } as Parameters<typeof undiciFetch>[1],
 	) as unknown as Promise<Response>
 }) as typeof globalThis.fetch
 

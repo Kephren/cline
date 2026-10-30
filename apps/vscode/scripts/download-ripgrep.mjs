@@ -62,16 +62,15 @@ const PLATFORMS = [
 /**
  * Download a file from a URL
  */
-async function downloadFile(url, destPath) {
+function downloadFileHttps(url, destPath) {
 	return new Promise((resolve, reject) => {
-		console.log(`  Downloading: ${url}`)
 		const file = fs.createWriteStream(destPath)
 
 		https
 			.get(url, (response) => {
 				if (response.statusCode === 302 || response.statusCode === 301) {
 					// Handle redirect
-					return downloadFile(response.headers.location, destPath).then(resolve).catch(reject)
+					return downloadFileHttps(response.headers.location, destPath).then(resolve).catch(reject)
 				}
 
 				if (response.statusCode !== 200) {
@@ -96,6 +95,26 @@ async function downloadFile(url, destPath) {
 			reject(err)
 		})
 	})
+}
+
+/**
+ * Download a file from a URL with automatic fallback to curl.
+ * This ensures downloads work behind corporate proxies (e.g. Cisco Umbrella)
+ * where Node's default CA bundle rejects intercepted SSL certificates.
+ */
+async function downloadFile(url, destPath) {
+	console.log(`  Downloading: ${url}`)
+	try {
+		await downloadFileHttps(url, destPath)
+	} catch (httpsErr) {
+		console.warn(`  https.get failed (${httpsErr.message}), falling back to curl...`)
+		try {
+			await execAsync(`curl -fsSL "${url}" -o "${destPath}"`)
+		} catch (curlErr) {
+			fs.unlink(destPath, () => {})
+			throw new Error(`Failed to download via https and curl: ${httpsErr.message} / ${curlErr.message}`)
+		}
+	}
 }
 
 /**

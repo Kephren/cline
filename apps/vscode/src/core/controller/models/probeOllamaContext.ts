@@ -1,9 +1,8 @@
 import { ProbeOllamaContextRequest, ProbeOllamaContextResponse } from "@shared/proto/cline/models"
 import axios from "axios"
 import { parseProviderId } from "@/sdk/model-catalog/provider-id"
-import { getAxiosSettings } from "@/shared/net"
 import { Controller } from ".."
-import { findMatchingOllamaModel, isOllamaMemoryOrCapacityError, normalizeOllamaUrl } from "./ollamaUtils"
+import { findMatchingOllamaModel, getOllamaAxiosSettings, isOllamaMemoryOrCapacityError, normalizeOllamaUrl } from "./ollamaUtils"
 
 interface OllamaPsModel {
 	name?: string
@@ -67,7 +66,7 @@ export async function probeOllamaContext(
 			})
 		}
 
-		const axiosConfig = getAxiosSettings()
+		const axiosConfig = getOllamaAxiosSettings()
 
 		// Probe Ollama by engaging the model API with the simplest prompt ("hi") and num_predict: 1.
 		// keep_alive: "5m" keeps the model in memory so /api/ps can inspect its VRAM allocation.

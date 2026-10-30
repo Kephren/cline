@@ -158,6 +158,14 @@ export interface ExtensionState {
 	/** Cline model the displayed cloud task runs on, else the one a new cloud task would use. */
 	cloudModelId?: string
 	openAiCodexIsAuthenticated?: boolean
+	autocompleteEnabled?: boolean
+	autocompleteShareWithChat?: boolean
+	autocompleteBaseUrl?: string
+	autocompleteApiKey?: string
+	autocompleteModelId?: string
+	autocompleteNumCtx?: number
+	autocompleteRequestTimeoutMs?: number
+	autocompleteThink?: boolean
 }
 
 /**

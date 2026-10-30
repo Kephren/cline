@@ -50,6 +50,13 @@ const editorFeatures: FeatureToggle[] = [
 		settingKey: "showFeatureTips",
 	},
 	{
+		id: "inline-autocomplete",
+		label: "Inline Autocomplete",
+		description: "Provide inline code suggestions from Ollama as you type in the editor.",
+		stateKey: "autocompleteEnabled",
+		settingKey: "autocompleteEnabled",
+	},
+	{
 		id: "background-edit",
 		label: "Background Edit",
 		description: "Allow edits without stealing editor focus",

@@ -14,19 +14,76 @@ import { main as generateProtoBusSetup } from "./generate-protobus-setup.mjs"
 
 const require = createRequire(import.meta.url)
 const isWindows = process.platform === "win32"
-// Resolve the grpc-tools package root via its package.json (stable regardless of `main`), so we
-// can both locate the bundled protoc and re-run its install script when the binary is missing.
-const GRPC_TOOLS_DIR = path.dirname(require.resolve("grpc-tools/package.json"))
-const GRPC_TOOLS_PROTOC = path.join(GRPC_TOOLS_DIR, "bin", isWindows ? "protoc.exe" : "protoc")
-// Legacy compatibility: some older/local Windows setups provision protoc into tmp-protoc.
-// Prefer that path when present, but fall back to the grpc-tools bundled binary used by CI/npm installs.
+const isDarwin = process.platform === "darwin"
+
+// Resolve the grpc-tools package root safely if available.
+let GRPC_TOOLS_DIR = null
+let GRPC_TOOLS_PROTOC = null
+try {
+	GRPC_TOOLS_DIR = path.dirname(require.resolve("grpc-tools/package.json"))
+	GRPC_TOOLS_PROTOC = path.join(GRPC_TOOLS_DIR, "bin", isWindows ? "protoc.exe" : "protoc")
+} catch {
+	// grpc-tools might not be installed or supported on this architecture (e.g. darwin-arm64)
+}
+
 const LEGACY_WINDOWS_PROTOC = path.resolve("tmp-protoc/bin/protoc.exe")
-const PROTOC = isWindows && fsSync.existsSync(LEGACY_WINDOWS_PROTOC) ? LEGACY_WINDOWS_PROTOC : GRPC_TOOLS_PROTOC
+
+/**
+ * Locate a usable protoc binary on the system before falling back to grpc-tools prebuilt.
+ * This is critical on Apple Silicon (M-series Mac) where native Homebrew protoc avoids
+ * Rosetta emulation, grpc-tools download failures, and corporate proxy SSL certificate blocks.
+ */
+function findProtoc() {
+	// 1. Explicit environment variable override
+	if (process.env.PROTOC && fsSync.existsSync(process.env.PROTOC)) {
+		return process.env.PROTOC
+	}
+
+	// 2. Standard macOS Homebrew / system locations
+	if (isDarwin) {
+		const macCandidates = [
+			"/opt/homebrew/bin/protoc", // Apple Silicon Homebrew default
+			"/usr/local/bin/protoc", // Intel Mac Homebrew default
+		]
+		for (const candidate of macCandidates) {
+			if (fsSync.existsSync(candidate)) {
+				return candidate
+			}
+		}
+	}
+
+	// 3. System PATH lookup via which/where
+	try {
+		const whichCmd = isWindows ? "where protoc" : "which protoc"
+		const output = execSync(whichCmd, { stdio: ["ignore", "pipe", "ignore"], encoding: "utf8" }).trim()
+		const firstPath = output.split(/\r?\n/)[0]?.trim()
+		if (firstPath && fsSync.existsSync(firstPath)) {
+			return firstPath
+		}
+	} catch {
+		// Not on PATH
+	}
+
+	// 4. Legacy Windows path
+	if (isWindows && fsSync.existsSync(LEGACY_WINDOWS_PROTOC)) {
+		return LEGACY_WINDOWS_PROTOC
+	}
+
+	// 5. Existing grpc-tools bundled binary if already present
+	if (GRPC_TOOLS_PROTOC && fsSync.existsSync(GRPC_TOOLS_PROTOC)) {
+		return GRPC_TOOLS_PROTOC
+	}
+
+	return null
+}
+
+let PROTOC = findProtoc()
 
 // `bun install` skips grpc-tools' `install` lifecycle script (`node-pre-gyp install`), so the prebuilt
 // protoc is never downloaded into bin/. When it's missing, run that same command here to fetch it.
 // grpc-tools depends on @mapbox/node-pre-gyp, which exposes the `node-pre-gyp` CLI.
 function resolveNodePreGypCli() {
+	if (!GRPC_TOOLS_DIR) return null
 	const candidates = ["@mapbox/node-pre-gyp/bin/node-pre-gyp", "node-pre-gyp/bin/node-pre-gyp"]
 	for (const candidate of candidates) {
 		try {
@@ -45,6 +102,17 @@ function resolveNodePreGypCli() {
 }
 
 function ensureProtocBinary() {
+	if (!GRPC_TOOLS_DIR || !GRPC_TOOLS_PROTOC) {
+		console.error(
+			chalk.red(
+				"protoc compiler not found and grpc-tools is not installed.\n" +
+					(isDarwin
+						? "On macOS (Apple Silicon), install protoc with Homebrew:\n  brew install protobuf\n"
+						: "Please install protoc or run `bun install`.\n"),
+			),
+		)
+		process.exit(1)
+	}
 	console.warn(chalk.yellow(`protoc not found at ${GRPC_TOOLS_PROTOC}; downloading the grpc-tools prebuilt binary...`))
 	const nodePreGypCli = resolveNodePreGypCli()
 	if (!nodePreGypCli) {
@@ -61,6 +129,13 @@ function ensureProtocBinary() {
 		execFileSync(process.execPath, [nodePreGypCli, "install"], { cwd: GRPC_TOOLS_DIR, stdio: "inherit" })
 	} catch (error) {
 		console.error(chalk.red(`Failed to download protoc via node-pre-gyp: ${error?.message ?? error}`))
+		if (isDarwin) {
+			console.error(
+				chalk.cyan(
+					"\nTip for macOS users: Install native protoc via Homebrew to avoid grpc-tools prebuilt issues:\n  brew install protobuf\n",
+				),
+			)
+		}
 		process.exit(1)
 	}
 	if (!fsSync.existsSync(GRPC_TOOLS_PROTOC)) {
@@ -70,10 +145,9 @@ function ensureProtocBinary() {
 	console.log(chalk.green("✓ protoc binary installed."))
 }
 
-if (!fsSync.existsSync(PROTOC)) {
-	// PROTOC only differs from GRPC_TOOLS_PROTOC when the legacy Windows path exists, so a missing
-	// PROTOC always means the grpc-tools-bundled protoc needs to be fetched.
+if (!PROTOC) {
 	ensureProtocBinary()
+	PROTOC = GRPC_TOOLS_PROTOC
 }
 
 const PROTO_DIR = path.resolve("proto")
@@ -241,22 +315,30 @@ function checkAppleSiliconCompatibility() {
 	// Check if running on Apple Silicon
 	const cpuArchitecture = os.arch()
 	if (cpuArchitecture === "arm64") {
-		try {
-			// Check if Rosetta is installed
-			const rosettaCheck = execSync('/usr/bin/pgrep oahd || echo "NOT_INSTALLED"').toString().trim()
+		// If using native system or Homebrew protoc, Rosetta is completely unnecessary!
+		if (PROTOC && PROTOC !== GRPC_TOOLS_PROTOC) {
+			log_verbose(chalk.green(`Using native Apple Silicon protoc: ${PROTOC}`))
+			return
+		}
 
-			if (rosettaCheck === "NOT_INSTALLED") {
-				console.log(chalk.yellow("Detected Apple Silicon (ARM64) architecture."))
-				console.log(
-					chalk.red("Rosetta 2 is NOT installed. The npm version of protoc is not compatible with Apple Silicon."),
-				)
-				console.log(chalk.cyan("Please install Rosetta 2 using the following command:"))
-				console.log(chalk.cyan("  softwareupdate --install-rosetta --agree-to-license"))
-				console.log(chalk.red("Aborting build process."))
-				process.exit(1)
-			}
-		} catch (_error) {
-			console.log(chalk.yellow("Could not determine Rosetta installation status. Proceeding anyway."))
+		// When using the x86 grpc-tools fallback binary, verify Rosetta 2 is available
+		let rosettaWorking = false
+		try {
+			execSync("/usr/bin/arch -x86_64 /usr/bin/true 2>/dev/null")
+			rosettaWorking = true
+		} catch {
+			// Rosetta 2 is not functional
+		}
+
+		if (!rosettaWorking) {
+			console.log(chalk.yellow("Detected Apple Silicon (ARM64) architecture."))
+			console.log(chalk.red("The bundled x86 protoc requires Rosetta 2 or a native Apple Silicon protoc."))
+			console.log(chalk.cyan("Recommended: Install native protoc via Homebrew:"))
+			console.log(chalk.cyan("  brew install protobuf"))
+			console.log(chalk.cyan("Alternatively, install Rosetta 2:"))
+			console.log(chalk.cyan("  softwareupdate --install-rosetta --agree-to-license"))
+			console.log(chalk.red("Aborting build process."))
+			process.exit(1)
 		}
 	}
 }

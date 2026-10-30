@@ -1,9 +1,8 @@
 import { StringArray, StringRequest } from "@shared/proto/cline/common"
 import axios from "axios"
 import { parseProviderId } from "@/sdk/model-catalog/provider-id"
-import { getAxiosSettings } from "@/shared/net"
 import { Controller } from ".."
-import { normalizeOllamaUrl } from "./ollamaUtils"
+import { getOllamaAxiosSettings, normalizeOllamaUrl } from "./ollamaUtils"
 
 /**
  * Fetches available models from Ollama
@@ -25,7 +24,7 @@ export async function getOllamaModels(controller: Controller, request: StringReq
 			return StringArray.create({ values: [] })
 		}
 
-		const response = await axios.get(`${normalizedBaseUrl}/api/tags`, getAxiosSettings())
+		const response = await axios.get(`${normalizedBaseUrl}/api/tags`, getOllamaAxiosSettings())
 		const modelsArray = response.data?.models?.map((model: any) => model.name) || []
 		const models = [...new Set<string>(modelsArray)].sort()
 
