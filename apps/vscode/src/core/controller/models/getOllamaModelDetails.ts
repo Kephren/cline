@@ -1,9 +1,8 @@
 import { OllamaModelDetailsRequest, OllamaModelDetailsResponse } from "@shared/proto/cline/models"
 import axios from "axios"
 import { parseProviderId } from "@/sdk/model-catalog/provider-id"
-import { getAxiosSettings } from "@/shared/net"
 import { Controller } from ".."
-import { normalizeOllamaModelName, normalizeOllamaUrl } from "./ollamaUtils"
+import { getOllamaAxiosSettings, normalizeOllamaModelName, normalizeOllamaUrl } from "./ollamaUtils"
 
 /**
  * Fetches detailed model metadata from Ollama (/api/show, with fallback to /api/tags).
@@ -32,7 +31,7 @@ export async function getOllamaModelDetails(
 			return OllamaModelDetailsResponse.create({})
 		}
 
-		const axiosConfig = getAxiosSettings()
+		const axiosConfig = getOllamaAxiosSettings()
 
 		let showData: Record<string, any> | undefined
 		try {

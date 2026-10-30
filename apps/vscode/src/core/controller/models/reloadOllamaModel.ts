@@ -3,9 +3,8 @@ import { ReloadOllamaModelRequest } from "@shared/proto/cline/models"
 import { Logger } from "@shared/services/Logger"
 import axios from "axios"
 import { parseProviderId } from "@/sdk/model-catalog/provider-id"
-import { getAxiosSettings } from "@/shared/net"
 import { Controller } from ".."
-import { normalizeOllamaUrl } from "./ollamaUtils"
+import { getOllamaAxiosSettings, normalizeOllamaUrl } from "./ollamaUtils"
 
 /**
  * Reloads a model in Ollama by first unloading it (keep_alive: 0) and then
@@ -28,7 +27,7 @@ export async function reloadOllamaModel(controller: Controller, request: ReloadO
 			return Empty.create({})
 		}
 
-		const axiosConfig = getAxiosSettings()
+		const axiosConfig = getOllamaAxiosSettings()
 		const isInfinite = request.keepAlive === "-1" || String(request.keepAlive) === "-1"
 
 		// Only unload if keep_alive is not infinite (-1). For preload/infinite keep-alive,

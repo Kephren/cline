@@ -1,6 +1,7 @@
-import { fetch } from "@/shared/net"
 import { Logger } from "@shared/services/Logger"
+import axios from "axios"
 import * as vscode from "vscode"
+import { getOllamaAxiosSettings } from "@/core/controller/models/ollamaUtils"
 import { type AutocompleteConfig, getEffectiveAutocompleteConfig, type StateProviderLike } from "./autocompleteConfig"
 
 export class ClineInlineCompletionProvider implements vscode.InlineCompletionItemProvider {
@@ -45,24 +46,22 @@ export class ClineInlineCompletionProvider implements vscode.InlineCompletionIte
 				},
 			}
 			const controller = new AbortController()
-			const timeoutId = setTimeout(() => controller.abort(), 300000) // 5 min timeout for heavy initial load
 			try {
-				const response = await fetch(`${effectiveConfig.baseUrl}/api/generate`, {
-					method: "POST",
+				const response = await axios.post(`${effectiveConfig.baseUrl}/api/generate`, payload, {
+					...getOllamaAxiosSettings(),
 					headers,
-					body: JSON.stringify(payload),
 					signal: controller.signal,
-					duplex: "half",
-				} as RequestInit)
-				if (response.ok) {
+					timeout: 300000, // 5 min timeout for heavy initial load
+				})
+				if (response.status >= 200 && response.status < 300) {
 					Logger.log(
 						`[ClineAutocomplete] Successfully preloaded ${effectiveConfig.modelId} with infinite keep-alive (-1)`,
 					)
 				} else {
 					Logger.warn(`[ClineAutocomplete] Preload returned status ${response.status}: ${response.statusText}`)
 				}
-			} finally {
-				clearTimeout(timeoutId)
+			} catch (postErr: any) {
+				Logger.warn(`[ClineAutocomplete] Preload request failed: ${postErr?.message || postErr}`)
 			}
 		} catch (error: any) {
 			Logger.warn(`[ClineAutocomplete] Failed to preload model: ${error?.message || error}`)
@@ -177,20 +176,19 @@ export class ClineInlineCompletionProvider implements vscode.InlineCompletionIte
 				},
 			}
 
-			const response = await fetch(`${config.baseUrl}/api/generate`, {
-				method: "POST",
+			const response = await axios.post<{ response?: string }>(`${config.baseUrl}/api/generate`, payload, {
+				...getOllamaAxiosSettings(),
 				headers,
-				body: JSON.stringify(payload),
 				signal: abortController.signal,
-				duplex: "half",
-			} as RequestInit)
+				timeout: config.requestTimeoutMs || 20000,
+			})
 
-			if (!response.ok) {
+			if (response.status < 200 || response.status >= 300) {
 				Logger.warn(`[ClineAutocomplete] Ollama returned status ${response.status}: ${response.statusText}`)
 				return undefined
 			}
 
-			const data = (await response.json()) as { response?: string }
+			const data = response.data || {}
 			let completion = data.response || ""
 
 			// Strip stray stop tokens, reasoning/think blocks, or prefixes if Ollama returns them
@@ -223,13 +221,19 @@ export class ClineInlineCompletionProvider implements vscode.InlineCompletionIte
 			const item = new vscode.InlineCompletionItem(completion, new vscode.Range(position, position))
 			return new vscode.InlineCompletionList([item])
 		} catch (error: any) {
-			if (didTimeout) {
+			const isTimeout = error?.code === "ECONNABORTED" || error?.name === "TimeoutError" || didTimeout
+			const isCanceled =
+				axios.isCancel(error) ||
+				error?.name === "AbortError" ||
+				error?.name === "CanceledError" ||
+				error?.code === "ERR_CANCELED"
+			if (isTimeout) {
 				Logger.warn(
 					`[ClineAutocomplete] Request timed out after ${config.requestTimeoutMs}ms waiting for ${config.baseUrl}; retaining model with keep_alive: -1`,
 				)
 				// Ensure Ollama finishes warming and retains the model in memory with infinite keep_alive
 				void this.preloadModel(config)
-			} else if (error?.name === "AbortError") {
+			} else if (isCanceled) {
 				Logger.debug(`[ClineAutocomplete] Request aborted due to new keystroke or cancellation`)
 			} else {
 				Logger.warn(`[ClineAutocomplete] Error fetching completion: ${error?.message || error}`)

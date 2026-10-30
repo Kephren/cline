@@ -1,6 +1,24 @@
+import type { AxiosRequestConfig } from "axios"
+import { getAxiosSettings } from "@/shared/net"
+
 /**
  * Shared utility functions for communicating with Ollama instances.
  */
+
+/**
+ * Returns Axios configuration specifically for communicating with Ollama instances.
+ * On Node.js / Electron (especially macOS M-series), this overrides the 'fetch' adapter
+ * with the native Node 'http' adapter. This completely eliminates WHATWG fetch/Undici
+ * errors such as "duplex option is required while sending body".
+ */
+export function getOllamaAxiosSettings(): AxiosRequestConfig {
+	const base = getAxiosSettings()
+	const { adapter, fetch, ...rest } = base as any
+	return {
+		...rest,
+		adapter: "http",
+	}
+}
 
 /**
  * Normalizes an Ollama base URL string.

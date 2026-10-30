@@ -2,9 +2,8 @@ import { Empty } from "@shared/proto/cline/common"
 import { UnloadOllamaModelRequest } from "@shared/proto/cline/models"
 import axios from "axios"
 import { parseProviderId } from "@/sdk/model-catalog/provider-id"
-import { getAxiosSettings } from "@/shared/net"
 import { Controller } from ".."
-import { normalizeOllamaUrl } from "./ollamaUtils"
+import { getOllamaAxiosSettings, normalizeOllamaUrl } from "./ollamaUtils"
 
 /**
  * Unloads running model(s) from Ollama memory/VRAM by setting keep_alive: 0
@@ -26,7 +25,7 @@ export async function unloadOllamaModel(controller: Controller, request: UnloadO
 			return Empty.create({})
 		}
 
-		const axiosConfig = getAxiosSettings()
+		const axiosConfig = getOllamaAxiosSettings()
 
 		// Discover active models from /api/ps
 		const psResponse = await axios.get(`${normalizedBaseUrl}/api/ps`, axiosConfig).catch(() => null)

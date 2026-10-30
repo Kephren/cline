@@ -2,9 +2,8 @@ import { StringRequest } from "@shared/proto/cline/common"
 import { OllamaModelStatusResponse } from "@shared/proto/cline/models"
 import axios from "axios"
 import { parseProviderId } from "@/sdk/model-catalog/provider-id"
-import { getAxiosSettings } from "@/shared/net"
 import { Controller } from ".."
-import { normalizeOllamaUrl } from "./ollamaUtils"
+import { getOllamaAxiosSettings, normalizeOllamaUrl } from "./ollamaUtils"
 
 /**
  * Fetches running model status from Ollama (/api/ps)
@@ -26,7 +25,7 @@ export async function getOllamaModelStatus(controller: Controller, request: Stri
 			return OllamaModelStatusResponse.create({ isRunning: false })
 		}
 
-		const response = await axios.get(`${normalizedBaseUrl}/api/ps`, getAxiosSettings())
+		const response = await axios.get(`${normalizedBaseUrl}/api/ps`, getOllamaAxiosSettings())
 		const models = response.data?.models || []
 		if (models.length === 0) {
 			return OllamaModelStatusResponse.create({ isRunning: false })

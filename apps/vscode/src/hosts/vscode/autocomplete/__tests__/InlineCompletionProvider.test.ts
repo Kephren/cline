@@ -1,16 +1,16 @@
+import axios from "axios"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import * as vscode from "vscode"
 import { ClineInlineCompletionProvider } from "../InlineCompletionProvider"
 
 describe("ClineInlineCompletionProvider", () => {
-	const originalFetch = global.fetch
-
 	beforeEach(() => {
 		vi.clearAllMocks()
+		vi.restoreAllMocks()
 	})
 
 	afterEach(() => {
-		global.fetch = originalFetch
+		vi.restoreAllMocks()
 	})
 
 	it("returns undefined when autocomplete is disabled", async () => {
@@ -85,20 +85,21 @@ describe("ClineInlineCompletionProvider", () => {
 
 		let capturedUrl = ""
 		let capturedBody: any = null
-		let capturedInit: any = null
+		let capturedConfig: any = null
 
-		global.fetch = vi.fn().mockImplementation(async (url: string, init: any) => {
+		vi.spyOn(axios, "post").mockImplementation(async (url: string, body: any, config: any) => {
 			capturedUrl = url
-			capturedInit = init
-			capturedBody = JSON.parse(init.body)
+			capturedBody = body
+			capturedConfig = config
 			return {
-				ok: true,
-				json: async () => ({
+				status: 200,
+				statusText: "OK",
+				data: {
 					response: "10;\nconsole.log(x);",
 					done: true,
-				}),
-			} as Response
-		}) as unknown as typeof fetch
+				},
+			} as any
+		})
 
 		const provider = new ClineInlineCompletionProvider(mockProvider as any)
 		const mockDoc = {
@@ -120,7 +121,7 @@ describe("ClineInlineCompletionProvider", () => {
 		)) as vscode.InlineCompletionList
 
 		expect(capturedUrl).toBe("http://localhost:11434/api/generate")
-		expect(capturedInit.duplex).toBe("half")
+		expect(capturedConfig.adapter).toBe("http")
 		expect(capturedBody.model).toBe("mannix/ornith-1.5-27b-a3b-coderx:Q3_K_M")
 		expect(capturedBody.raw).toBe(true)
 		expect(capturedBody.think).toBe(false)
@@ -153,21 +154,22 @@ describe("ClineInlineCompletionProvider", () => {
 		}
 
 		let preloadBody: any = null
-		let preloadInit: any = null
-		global.fetch = vi.fn().mockImplementation(async (_url: string, init: any) => {
-			preloadInit = init
-			preloadBody = JSON.parse(init.body)
+		let preloadConfig: any = null
+		vi.spyOn(axios, "post").mockImplementation(async (_url: string, body: any, config: any) => {
+			preloadConfig = config
+			preloadBody = body
 			return {
-				ok: true,
-				json: async () => ({}),
-			} as Response
-		}) as unknown as typeof fetch
+				status: 200,
+				statusText: "OK",
+				data: {},
+			} as any
+		})
 
 		const provider = new ClineInlineCompletionProvider(mockProvider as any)
 		await provider.preloadOnStartup()
 
 		expect(preloadBody).toBeDefined()
-		expect(preloadInit.duplex).toBe("half")
+		expect(preloadConfig.adapter).toBe("http")
 		expect(preloadBody.model).toBe("mannix/ornith-1.5-27b-a3b-coderx:Q3_K_M")
 		expect(preloadBody.keep_alive).toBe(-1)
 		expect(preloadBody.prompt).toBe("")
@@ -192,25 +194,25 @@ describe("ClineInlineCompletionProvider", () => {
 			},
 		}
 
-		const fetchBodies: any[] = []
-		global.fetch = vi.fn().mockImplementation(async (_url: string, init: any) => {
-			const body = JSON.parse(init.body)
-			fetchBodies.push(body)
+		const postBodies: any[] = []
+		vi.spyOn(axios, "post").mockImplementation(async (_url: string, body: any, config: any) => {
+			postBodies.push(body)
 			if (body.prompt !== "") {
 				// Simulate hanging completion request that times out
 				await new Promise((_, reject) => {
-					init.signal?.addEventListener("abort", () => {
-						const err = new Error("The operation was aborted")
-						err.name = "AbortError"
+					config.signal?.addEventListener("abort", () => {
+						const err = new Error("timeout")
+						;(err as any).code = "ECONNABORTED"
 						reject(err)
 					})
 				})
 			}
 			return {
-				ok: true,
-				json: async () => ({}),
-			} as Response
-		}) as unknown as typeof fetch
+				status: 200,
+				statusText: "OK",
+				data: {},
+			} as any
+		})
 
 		const provider = new ClineInlineCompletionProvider(mockProvider as any)
 		const mockDoc = {
@@ -230,7 +232,7 @@ describe("ClineInlineCompletionProvider", () => {
 		// Wait for the background preload to be invoked
 		await new Promise((r) => setTimeout(r, 50))
 
-		const preloadCall = fetchBodies.find((b) => b.prompt === "")
+		const preloadCall = postBodies.find((b) => b.prompt === "")
 		expect(preloadCall).toBeDefined()
 		expect(preloadCall.keep_alive).toBe(-1)
 		expect(preloadCall.options.num_ctx).toBe(65536)
@@ -256,16 +258,17 @@ describe("ClineInlineCompletionProvider", () => {
 		}
 
 		let capturedBody: any = null
-		global.fetch = vi.fn().mockImplementation(async (_url: string, init: any) => {
-			capturedBody = JSON.parse(init.body)
+		vi.spyOn(axios, "post").mockImplementation(async (_url: string, body: any) => {
+			capturedBody = body
 			return {
-				ok: true,
-				json: async () => ({
+				status: 200,
+				statusText: "OK",
+				data: {
 					response: "<think>Let me reason about this assignment</think>20;",
 					done: true,
-				}),
-			} as Response
-		}) as unknown as typeof fetch
+				},
+			} as any
+		})
 
 		const provider = new ClineInlineCompletionProvider(mockProvider as any)
 		const mockDoc = {
