@@ -121,7 +121,7 @@ describe("ClineInlineCompletionProvider", () => {
 		expect(capturedBody.model).toBe("mannix/ornith-1.5-27b-a3b-coderx:Q3_K_M")
 		expect(capturedBody.raw).toBe(true)
 		expect(capturedBody.think).toBe(false)
-		expect(capturedBody.keep_alive).toBe("30m")
+		expect(capturedBody.keep_alive).toBe(-1)
 		expect(capturedBody.prompt).toContain("<|fim_prefix|>")
 		expect(capturedBody.prompt).toContain("const x = ")
 		expect(capturedBody.prompt).toContain("<|fim_middle|>")
@@ -132,7 +132,7 @@ describe("ClineInlineCompletionProvider", () => {
 		expect(result.items[0].insertText).toBe("10;\nconsole.log(x);")
 	})
 
-	it("preloads the model on startup with 30m keep_alive", async () => {
+	it("preloads the model on startup with infinite keep_alive (-1)", async () => {
 		const mockProvider = {
 			stateManager: {
 				getGlobalSettingsKey: (key: string) => {
@@ -163,12 +163,12 @@ describe("ClineInlineCompletionProvider", () => {
 
 		expect(preloadBody).toBeDefined()
 		expect(preloadBody.model).toBe("mannix/ornith-1.5-27b-a3b-coderx:Q3_K_M")
-		expect(preloadBody.keep_alive).toBe("30m")
+		expect(preloadBody.keep_alive).toBe(-1)
 		expect(preloadBody.prompt).toBe("")
 		expect(preloadBody.options.num_ctx).toBe(65536)
 	})
 
-	it("preloads with 30m keep_alive when a completion request times out", async () => {
+	it("preloads with infinite keep_alive (-1) when a completion request times out", async () => {
 		const mockProvider = {
 			stateManager: {
 				getGlobalSettingsKey: (key: string) => {
@@ -226,7 +226,7 @@ describe("ClineInlineCompletionProvider", () => {
 
 		const preloadCall = fetchBodies.find((b) => b.prompt === "")
 		expect(preloadCall).toBeDefined()
-		expect(preloadCall.keep_alive).toBe("30m")
+		expect(preloadCall.keep_alive).toBe(-1)
 		expect(preloadCall.options.num_ctx).toBe(65536)
 	})
 

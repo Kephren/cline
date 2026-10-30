@@ -13,8 +13,12 @@ export function registerAutocompleteProvider(
 
 	disposables.push(vscode.languages.registerInlineCompletionItemProvider(selector, provider))
 
-	// Preload autocomplete model when the extension is first loaded with 30m keep_alive
-	void provider.preloadOnStartup()
+	// Preload autocomplete model when the extension is first loaded with infinite keep_alive (-1)
+	void (async () => {
+		// Yield slightly to ensure stateManager and network listeners are initialized (especially in remote sessions)
+		await new Promise((r) => setTimeout(r, 1000))
+		await provider.preloadOnStartup()
+	})()
 
 	const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 99)
 	statusBarItem.command = "cline.toggleAutocomplete"

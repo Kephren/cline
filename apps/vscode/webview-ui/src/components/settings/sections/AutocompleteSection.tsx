@@ -156,7 +156,7 @@ export const AutocompleteSection = ({ renderSectionHeader }: AutocompleteSection
 					baseUrl: effectiveBaseUrl,
 					modelName: targetModel,
 					contextWindow: Number.isFinite(effectiveNumCtx) && effectiveNumCtx > 0 ? effectiveNumCtx : 65536,
-					keepAlive: "30m",
+					keepAlive: "-1",
 				}),
 			)
 			if (isMountedRef.current) {

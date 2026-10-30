@@ -1,3 +1,4 @@
+import { fetch } from "@/shared/net"
 import { Logger } from "@shared/services/Logger"
 import * as vscode from "vscode"
 import { type AutocompleteConfig, getEffectiveAutocompleteConfig, type StateProviderLike } from "./autocompleteConfig"
@@ -12,8 +13,8 @@ export class ClineInlineCompletionProvider implements vscode.InlineCompletionIte
 	}
 
 	/**
-	 * Preload the autocomplete model into Ollama VRAM with 30m keep_alive.
-	 * This prevents the model from cold-starting or unloading prematurely.
+	 * Preload the autocomplete model into Ollama VRAM with infinite keep_alive (-1).
+	 * This prevents the model from cold-starting or unloading, respecting the server's infinite keep-alive.
 	 */
 	async preloadModel(config?: AutocompleteConfig): Promise<void> {
 		if (this.isPreloading) {
@@ -26,7 +27,7 @@ export class ClineInlineCompletionProvider implements vscode.InlineCompletionIte
 			}
 			this.isPreloading = true
 			Logger.log(
-				`[ClineAutocomplete] Preloading model ${effectiveConfig.modelId} with 30m keep_alive and ${effectiveConfig.numCtx} context...`,
+				`[ClineAutocomplete] Preloading model ${effectiveConfig.modelId} with infinite keep-alive (-1) and ${effectiveConfig.numCtx} context...`,
 			)
 			const headers: Record<string, string> = {
 				"Content-Type": "application/json",
@@ -38,7 +39,7 @@ export class ClineInlineCompletionProvider implements vscode.InlineCompletionIte
 				model: effectiveConfig.modelId,
 				prompt: "",
 				stream: false,
-				keep_alive: "30m",
+				keep_alive: -1,
 				options: {
 					num_ctx: effectiveConfig.numCtx || 65536,
 				},
@@ -53,7 +54,9 @@ export class ClineInlineCompletionProvider implements vscode.InlineCompletionIte
 					signal: controller.signal,
 				})
 				if (response.ok) {
-					Logger.log(`[ClineAutocomplete] Successfully preloaded ${effectiveConfig.modelId} with 30m keep_alive`)
+					Logger.log(
+						`[ClineAutocomplete] Successfully preloaded ${effectiveConfig.modelId} with infinite keep-alive (-1)`,
+					)
 				} else {
 					Logger.warn(`[ClineAutocomplete] Preload returned status ${response.status}: ${response.statusText}`)
 				}
@@ -155,7 +158,7 @@ export class ClineInlineCompletionProvider implements vscode.InlineCompletionIte
 				raw: true,
 				think: config.think ?? false,
 				stream: false,
-				keep_alive: "30m",
+				keep_alive: -1,
 				options: {
 					num_ctx: config.numCtx || 65536,
 					num_predict: 64,
@@ -220,10 +223,9 @@ export class ClineInlineCompletionProvider implements vscode.InlineCompletionIte
 		} catch (error: any) {
 			if (didTimeout) {
 				Logger.warn(
-					`[ClineAutocomplete] Request timed out after ${config.requestTimeoutMs}ms waiting for ${config.baseUrl}; keeping model preloaded with 30m keep_alive`,
+					`[ClineAutocomplete] Request timed out after ${config.requestTimeoutMs}ms waiting for ${config.baseUrl}; retaining model with keep_alive: -1`,
 				)
-				// Rather than letting the model be unloaded after a client-side timeout,
-				// ensure Ollama finishes warming and retains the model in memory with 30m keep_alive.
+				// Ensure Ollama finishes warming and retains the model in memory with infinite keep_alive
 				void this.preloadModel(config)
 			} else if (error?.name === "AbortError") {
 				Logger.debug(`[ClineAutocomplete] Request aborted due to new keystroke or cancellation`)

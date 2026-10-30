@@ -113,4 +113,32 @@ describe("reloadOllamaModel", () => {
 		const result = await reloadOllamaModel(mockController, request)
 		expect(result).toBeDefined()
 	})
+
+	it("skips unloading active models when keepAlive is -1 (infinite keep-alive)", async () => {
+		axiosPost.resolves({ data: {} })
+
+		const request = ReloadOllamaModelRequest.create({
+			baseUrl: "http://localhost:11434",
+			modelName: "mannix/ornith-1.5-27b-a3b-coderx:Q3_K_M",
+			contextWindow: 65536,
+			keepAlive: "-1",
+		})
+
+		await reloadOllamaModel(mockController, request)
+
+		// Should not call GET /api/ps to find models to unload
+		expect(axiosGet.called).toBe(false)
+		// Should only call POST /api/generate once to load the model
+		expect(axiosPost.callCount).toBe(1)
+		expect(axiosPost.getCall(0).args[1]).toEqual({
+			model: "mannix/ornith-1.5-27b-a3b-coderx:Q3_K_M",
+			prompt: "",
+			stream: false,
+			keep_alive: -1,
+			options: {
+				num_ctx: 65536,
+				num_batch: 512,
+			},
+		})
+	})
 })

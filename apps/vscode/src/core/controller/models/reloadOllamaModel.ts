@@ -1,5 +1,6 @@
 import { Empty } from "@shared/proto/cline/common"
 import { ReloadOllamaModelRequest } from "@shared/proto/cline/models"
+import { Logger } from "@shared/services/Logger"
 import axios from "axios"
 import { parseProviderId } from "@/sdk/model-catalog/provider-id"
 import { getAxiosSettings } from "@/shared/net"
@@ -28,35 +29,40 @@ export async function reloadOllamaModel(controller: Controller, request: ReloadO
 		}
 
 		const axiosConfig = getAxiosSettings()
+		const isInfinite = request.keepAlive === "-1" || String(request.keepAlive) === "-1"
 
-		// Discover active models from /api/ps
-		const psResponse = await axios.get(`${normalizedBaseUrl}/api/ps`, axiosConfig).catch(() => null)
-		const runningModels: any[] = psResponse?.data?.models || []
+		// Only unload if keep_alive is not infinite (-1). For preload/infinite keep-alive,
+		// never unload the model first (which would drop it from VRAM and force a full reload).
+		if (!isInfinite) {
+			// Discover active models from /api/ps
+			const psResponse = await axios.get(`${normalizedBaseUrl}/api/ps`, axiosConfig).catch(() => null)
+			const runningModels: any[] = psResponse?.data?.models || []
 
-		const modelsToUnload = new Set<string>()
-		for (const m of runningModels) {
-			const name = m.name || m.model
-			if (name) {
-				modelsToUnload.add(name)
+			const modelsToUnload = new Set<string>()
+			for (const m of runningModels) {
+				const name = m.name || m.model
+				if (name) {
+					modelsToUnload.add(name)
+				}
 			}
-		}
 
-		if (request.modelName) {
-			modelsToUnload.add(request.modelName)
-		}
+			if (request.modelName) {
+				modelsToUnload.add(request.modelName)
+			}
 
-		// Unload all active models by requesting keep_alive: 0
-		for (const model of modelsToUnload) {
-			await axios
-				.post(
-					`${normalizedBaseUrl}/api/generate`,
-					{
-						model,
-						keep_alive: 0,
-					},
-					axiosConfig,
-				)
-				.catch(() => null)
+			// Unload all active models by requesting keep_alive: 0
+			for (const model of modelsToUnload) {
+				await axios
+					.post(
+						`${normalizedBaseUrl}/api/generate`,
+						{
+							model,
+							keep_alive: 0,
+						},
+						axiosConfig,
+					)
+					.catch(() => null)
+			}
 		}
 
 		// Preload target model with runtime options (num_ctx, num_gpu, num_predict)
@@ -74,6 +80,8 @@ export async function reloadOllamaModel(controller: Controller, request: ReloadO
 				num_batch: 512,
 			}
 
+			const keepAliveVal = isInfinite ? -1 : request.keepAlive || "10m"
+
 			await axios
 				.post(
 					`${normalizedBaseUrl}/api/generate`,
@@ -81,12 +89,17 @@ export async function reloadOllamaModel(controller: Controller, request: ReloadO
 						model: request.modelName,
 						prompt: "",
 						stream: false,
-						keep_alive: request.keepAlive || "10m",
+						keep_alive: keepAliveVal,
 						options,
 					},
-					axiosConfig,
+					{
+						...axiosConfig,
+						timeout: 300000, // 5 min timeout for large model preloading
+					},
 				)
-				.catch(() => null)
+				.catch((err) => {
+					Logger.warn(`Failed to preload model in Ollama: ${err?.message || err}`)
+				})
 		}
 	} catch (_error) {
 		// Silently catch errors during reload
